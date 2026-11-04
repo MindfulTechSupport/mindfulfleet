@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Mindful Fleet hub: receives reports and serves the dashboard. Standard library only."""
+import argparse
+import hmac
+import json
+import math
+import os
+import random
+import re
+import signal
+import sys
+import tempfile
+import threading
+import time
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import health  # noqa: E402
+
+VERSION = "0.1.0"
+DEFAULT_PORT = 8742
+MAX_BODY_BYTES = 16 * 1024
+MAX_PIS = 256
+HISTORY_SAMPLES = 120  # 30 minutes at the default 15-second interval.
+SAVE_EVERY_SECONDS = 30
+DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
+STATIC_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/style.css": ("style.css", "text/css; charset=utf-8"),
+}
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+_ID_RE = re.compile(r"^[a-f0-9]{8,64}$")
+_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+_IP_RE = re.compile(r"^[0-9a-fA-F:.]{2,45}$")
+
+
+class BadReport(ValueError):
+    pass
+
+
+def _number(value, low, high):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise BadReport("expected a number")
+    if not math.isfinite(value) or not low <= value <= high:
+        raise BadReport("number out of range")
+    return value
+
+
+def clean_report(raw):
+    """Keep only known fields, and refuse anything malformed."""
+    if not isinstance(raw, dict):
+        raise BadReport("report must be an object")
+    pi_id, hostname = raw.get("id"), raw.get("hostname")
+    if not isinstance(pi_id, str) or not _ID_RE.match(pi_id):
+        raise BadReport("bad id")
+    if not isinstance(hostname, str) or not _HOST_RE.match(hostname):
+        raise BadReport("bad hostname")
+    ip = raw.get("ip")
+    if ip is not None and (not isinstance(ip, str) or not _IP_RE.match(ip)):
+        raise BadReport("bad ip")
+    model, version = raw.get("model"), raw.get("reporter_version")
+    cores = raw.get("cpu_per_core", [])
+    if not isinstance(cores, list) or len(cores) > 256:
+        raise BadReport("bad cpu list")
+    terabytes = 1 << 50
+    return {
+        "id": pi_id,
+        "hostname": hostname,
+        "ip": ip,
+        "model": model[:80] if isinstance(model, str) else None,
+        "reporter_version": version[:20] if isinstance(version, str) else None,
+        "temp_c": _number(raw.get("temp_c"), -50, 200),
+        "throttled": _number(raw.get("throttled"), 0, 2**32),
+        "fan_rpm": _number(raw.get("fan_rpm"), 0, 100000),
+        "cpu_per_core": [_number(c, 0, 100) for c in cores],
+        "mem_total": _number(raw.get("mem_total"), 0, terabytes),
+        "mem_used": _number(raw.get("mem_used"), 0, terabytes),
+        "disk_total": _number(raw.get("disk_total"), 0, terabytes),
+        "disk_used": _number(raw.get("disk_used"), 0, terabytes),
+        "uptime_s": _number(raw.get("uptime_s"), 0, 10**10),
+    }
+
+
+class Fleet:
+    """Everything the hub knows. Remembers Pis across restarts, so a dead one still shows as offline."""
+
+    def __init__(self, state_path=None, clock=time.time):
+        self._lock = threading.Lock()
+        self._pis = {}
+        self._state_path = Path(state_path) if state_path else None
+        self._clock = clock
+        self._load()
+
+    def _load(self):
+        if not self._state_path or not self._state_path.exists():
+            return
+        try:
+            for pi_id, saved in json.loads(self._state_path.read_text()).items():
+                self._pis[pi_id] = {
+                    "report": clean_report(saved["report"]),
+                    "last_seen": float(saved["last_seen"]),
+                    "history": deque(saved.get("history", []), maxlen=HISTORY_SAMPLES),
+                }
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"Ignoring unreadable state file: {error}", file=sys.stderr)
+            self._pis = {}
+
+    def save(self):
+        if not self._state_path:
+            return
+        with self._lock:
+            data = {
+                pi_id: {"report": p["report"], "last_seen": p["last_seen"], "history": list(p["history"])}
+                for pi_id, p in self._pis.items()
+            }
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=self._state_path.parent, delete=False) as f:
+            json.dump(data, f)
+        os.replace(f.name, self._state_path)
+
+    def record(self, report):
+        """Store a cleaned report. Returns False when the fleet is full."""
+        with self._lock:
+            pi = self._pis.get(report["id"])
+            if pi is None:
+                if len(self._pis) >= MAX_PIS:
+                    return False
+                pi = self._pis[report["id"]] = {"history": deque(maxlen=HISTORY_SAMPLES)}
+            pi["report"] = report
+            pi["last_seen"] = self._clock()
+            if report["temp_c"] is not None:
+                pi["history"].append(report["temp_c"])
+        return True
+
+    def age_all(self, seconds):
+        """Used by demo mode to make a Pi look like it went quiet a while ago."""
+        with self._lock:
+            for pi in self._pis.values():
+                pi["last_seen"] -= seconds
+
+    def snapshot(self):
+        now = self._clock()
+        with self._lock:
+            pis = [(p["report"], p["last_seen"], list(p["history"])) for p in self._pis.values()]
+        cards = []
+        for report, last_seen, history in pis:
+            age = max(0, now - last_seen)
+            cards.append({
+                **report,
+                "age_s": round(age),
+                "history": history,
+                "health": health.assess(report, age),
+            })
+        cards.sort(key=lambda c: _natural_key(c["hostname"]))
+        return {"version": VERSION, "server_time": now, "pis": cards}
+
+
+def _natural_key(text):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
+
+
+def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "MindfulFleet"
+        sys_version = ""
+        protocol_version = "HTTP/1.1"
+        timeout = 15
+
+        def log_message(self, *args):
+            pass  # Reports arrive constantly. Logging them would wear out SD cards.
+
+        def _send(self, status, body, content_type="application/json"):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            for name, value in SECURITY_HEADERS.items():
+                self.send_header(name, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def _json(self, status, payload):
+            self._send(status, json.dumps(payload).encode())
+
+        def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            if path == "/api/fleet":
+                self._json(200, fleet.snapshot())
+            elif path == "/healthz":
+                self._json(200, {"ok": True, "version": VERSION})
+            elif path in STATIC_FILES:
+                name, content_type = STATIC_FILES[path]
+                self._send(200, (static_dir / name).read_bytes(), content_type)
+            else:
+                self._json(404, {"error": "not found"})
+
+        do_HEAD = do_GET
+
+        def do_POST(self):
+            # Read errors close the connection, since the body may be unread.
+            if self.path != "/api/report":
+                self.close_connection = True
+                return self._json(404, {"error": "not found"})
+            supplied = self.headers.get("Authorization", "")
+            if not token or not hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
+                self.close_connection = True
+                return self._json(401, {"error": "bad token"})
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.close_connection = True
+                return self._json(411, {"error": "length required"})
+            if not 0 < length <= MAX_BODY_BYTES:
+                self.close_connection = True
+                return self._json(413, {"error": "report too large"})
+            try:
+                report = clean_report(json.loads(self.rfile.read(length)))
+            except (ValueError, UnicodeDecodeError) as error:
+                return self._json(400, {"error": str(error)})
+            if not fleet.record(report):
+                return self._json(507, {"error": "fleet is full"})
+            self._json(200, {"ok": True})
+
+    return Handler
+
+
+def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None, uptime=864000):
+    gib = 1024**3
+    return {
+        "id": f"{abs(hash(name)) & (2**64 - 1):016x}",
+        "hostname": name,
+        "ip": f"192.168.1.{10 + sum(map(ord, name)) % 200}",
+        "model": "Raspberry Pi 5 Model B Rev 1.0",
+        "reporter_version": VERSION,
+        "temp_c": round(temp + random.uniform(-0.6, 0.6), 1),
+        "throttled": throttled,
+        "fan_rpm": fan if fan is not None else 2400 + random.randint(-80, 80),
+        "cpu_per_core": cpu or [round(random.uniform(8, 30), 1) for _ in range(4)],
+        "mem_total": 8 * gib,
+        "mem_used": 8 * gib * mem // 100,
+        "disk_total": 64 * gib,
+        "disk_used": 64 * gib * disk // 100,
+        "uptime_s": uptime,
+    }
+
+
+def run_demo(fleet, stop):
+    """Pretend fleet that shows off each state a card can be in."""
+    busy = [100.0, 100.0, 100.0, 100.0]
+    cast = (
+        ("garage-pi", 52, {}),
+        ("pi-hole", 47, {}),
+        ("workshop-pi", 76, {"cpu": busy, "fan": 0}),
+        ("attic-pi", 83, {"cpu": busy, "throttled": 0x60006}),
+        ("media-pi", 49, {"disk": 93, "throttled": 0x10000, "fan": 0, "uptime": 7200}),
+    )
+    fleet.record(demo_report("old-shed-pi", 44))
+    fleet.age_all(660)  # Only old-shed-pi exists so far, so only it goes quiet.
+    for _ in range(40):
+        for name, temp, kwargs in cast:
+            fleet.record(demo_report(name, temp, **kwargs))
+    while not stop.wait(5):
+        for name, temp, kwargs in cast:
+            fleet.record(demo_report(name, temp, **kwargs))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run the Mindful Fleet hub and dashboard.")
+    parser.add_argument("--host", default=os.environ.get("MINDFUL_FLEET_HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("MINDFUL_FLEET_PORT", DEFAULT_PORT)))
+    parser.add_argument("--state", default=os.environ.get("MINDFUL_FLEET_STATE"),
+                        help="file that remembers your Pis between restarts")
+    parser.add_argument("--demo", action="store_true", help="show a pretend fleet on this computer only")
+    parser.add_argument("--version", action="version", version=VERSION)
+    args = parser.parse_args(argv)
+    token = os.environ.get("MINDFUL_FLEET_TOKEN")
+
+    if args.demo:
+        args.host, args.state, token = "127.0.0.1", None, None
+    elif not token:
+        parser.error("set the MINDFUL_FLEET_TOKEN environment variable, or use --demo")
+
+    fleet = Fleet(args.state)
+    stop = threading.Event()
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(fleet, token))
+    server.daemon_threads = True
+
+    def shut_down(*_):
+        stop.set()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, shut_down)
+    signal.signal(signal.SIGINT, shut_down)
+
+    if args.demo:
+        threading.Thread(target=run_demo, args=(fleet, stop), daemon=True).start()
+    else:
+        def keep_saving():
+            while not stop.wait(SAVE_EVERY_SECONDS):
+                try:
+                    fleet.save()
+                except OSError as error:
+                    print(f"Couldn't save state: {error}", file=sys.stderr, flush=True)
+        threading.Thread(target=keep_saving, daemon=True).start()
+
+    print(f"Mindful Fleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
+    server.serve_forever()
+    try:
+        fleet.save()
+    except OSError as error:
+        print(f"Couldn't save state: {error}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

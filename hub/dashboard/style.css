@@ -1,0 +1,88 @@
+:root {
+  --bg: #e6e8f6;
+  --ink: #23264a;
+  --soft: #5a5e86;
+  --card: #ffffff;
+  --track: #e3e5f3;
+  --neutral: #6d74c4;
+  --ok: #1f8a5b;
+  --ok-body: #8fdcb4;
+  --warn: #9a6200;
+  --warn-body: #ffcf6e;
+  --bad: #c22f3a;
+  --bad-body: #ff9a9a;
+  --off: #63667f;
+  --off-body: #c5c7d6;
+  --face: #23264a;
+  font-family: ui-rounded, "SF Pro Rounded", "Arial Rounded MT", "Nunito", "Varela Round", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d2040;
+    --ink: #f0f1fb;
+    --soft: #b0b3d6;
+    --card: #2a2e58;
+    --track: #3c4175;
+    --neutral: #a3a9f0;
+    --ok: #7fe0ae;
+    --warn: #ffd072;
+    --bad: #ff9fa3;
+    --off: #bdbfd2;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.4; }
+.top, main, .foot { max-width: 1240px; margin: 0 auto; padding-inline: 16px; }
+.top { padding-top: 32px; padding-bottom: 24px; }
+.brand { margin: 0 0 6px; font-weight: 700; color: var(--soft); }
+h1 { margin: 0; font-size: clamp(1.6rem, 4.5vw, 2.6rem); line-height: 1.15; font-weight: 800; max-width: 26em; text-wrap: balance; }
+.connection { margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--bad-body); color: #4a0d12; font-weight: 700; width: fit-content; }
+.connection[hidden], .empty[hidden] { display: none; }
+.empty { background: var(--card); border-radius: 24px; padding: 32px; max-width: 34em; }
+.empty h2 { margin: 0 0 6px; }
+.empty p { margin: 0; color: var(--soft); }
+
+.fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 18px; }
+.pi { background: var(--card); border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; }
+.pi-head { display: flex; align-items: center; gap: 14px; padding: 16px 18px; color: #23264a; }
+.ok .pi-head { background: var(--ok-body); }
+.warn .pi-head { background: var(--warn-body); }
+.bad .pi-head { background: var(--bad-body); }
+.offline .pi-head { background: var(--off-body); }
+.mascot { width: 68px; height: 68px; flex: none; }
+.pi-title { min-width: 0; flex: 1; }
+.pi-title h2 { margin: 0; font-size: 1.2rem; font-weight: 800; overflow-wrap: anywhere; }
+.pi-mood { margin: 0; font-weight: 700; }
+.pi-where { margin: 0; font-size: .85rem; overflow-wrap: anywhere; }
+
+.pi-body { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
+.heat { display: flex; align-items: flex-end; gap: 14px; }
+.degrees { font-size: 2.9rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.degrees.warn { color: var(--warn); }
+.degrees.bad { color: var(--bad); }
+.spark { flex: 1; min-width: 0; height: 42px; }
+.spark polyline { fill: none; stroke: var(--neutral); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.heat-note { margin: -8px 0 0; font-size: .85rem; color: var(--soft); }
+
+.issues { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
+.issues li.bad { color: var(--bad); }
+.issues li.warn { color: var(--warn); }
+.issues li.offline { color: var(--off); }
+
+.facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
+.facts dt { color: var(--soft); }
+.facts dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facts dd.warn { color: var(--warn); }
+.facts dd.bad { color: var(--bad); }
+.meter { display: flex; align-items: center; gap: 10px; }
+.bar { flex: 1; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
+.fill { height: 100%; border-radius: 5px; background: var(--neutral); }
+.fill.warn { background: var(--warn-body); }
+.fill.bad { background: var(--bad); }
+.meter span { min-width: 3em; }
+.cores { display: flex; gap: 4px; align-items: flex-end; justify-content: flex-end; height: 26px; }
+.core { width: 12px; height: 100%; border-radius: 4px; background: var(--track); display: flex; align-items: flex-end; overflow: hidden; }
+.core i { display: block; width: 100%; background: var(--neutral); }
+.stale { opacity: .8; }
+.foot { padding-top: 28px; padding-bottom: 32px; color: var(--soft); font-size: .8rem; }
+.foot p { margin: 0; max-width: 70ch; }

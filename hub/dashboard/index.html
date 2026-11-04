@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mindful Fleet</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <p class="brand">Mindful Fleet</p>
+    <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
+    <p id="connection" class="connection" role="status" hidden></p>
+  </header>
+  <main>
+    <div id="empty" class="empty" hidden>
+      <h2>No computers have checked in yet</h2>
+      <p>Install the reporter on your first one. It shows up here within about 15 seconds.</p>
+    </div>
+    <div id="fleet" class="fleet"></div>
+  </main>
+  <footer class="foot">
+    <p>Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. Mindful Fleet is an independent project, not made or endorsed by Raspberry Pi Ltd.</p>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
