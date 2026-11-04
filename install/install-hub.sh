@@ -60,5 +60,7 @@ IP="$(hostname -I | awk '{print $1}')"
 echo
 echo "Hub installed."
 echo "Dashboard:  http://$IP:$PORT/"
-echo "Hub address for each reporter:  http://$IP:$PORT"
 echo "Fleet token (keep this private):  $TOKEN"
+echo
+echo "To add a computer, including this one, paste this line on it:"
+echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"

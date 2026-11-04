@@ -18,28 +18,27 @@ Then open http://127.0.0.1:8742/
 
 ## Install it
 
-Pick one computer to run the dashboard. Copy this folder to it, then:
+On the computer that will run the dashboard, paste:
 
 ```
-sudo ./install/install-hub.sh
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- hub
 ```
 
-It prints the dashboard address, the hub address, and your fleet token.
+It prints the dashboard address and a ready-made line for adding computers. Paste that line on every computer you want to watch, including that one. Each one shows up within about 15 seconds.
 
-On every computer you want to watch, including that one, copy this folder over and run:
+## Update it
 
-```
-sudo ./install/install-reporter.sh http://HUB-ADDRESS:8742
-```
-
-Paste the token when asked. The computer shows up on the dashboard within about 15 seconds.
-
-To copy the folder from another computer:
+On each computer, paste:
 
 ```
-scp -r mindful-fleet USERNAME@PI-ADDRESS:
-ssh -t USERNAME@PI-ADDRESS "cd mindful-fleet && sudo ./install/install-reporter.sh http://HUB-ADDRESS:8742"
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- update
 ```
+
+It updates whatever is installed there and keeps your settings. Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
+
+## Arrange your dashboard
+
+Use the **Card size** slider to fit your screen. **Arrange cards** lets you drag cards into your own order and create groups. Your layout is saved in that browser, so another computer or browser starts with the default layout.
 
 ## What the colors mean
 
@@ -52,17 +51,15 @@ ssh -t USERNAME@PI-ADDRESS "cd mindful-fleet && sudo ./install/install-reporter.
 | Memory | 85% full | 95% full |
 | Storage | 80% full | 90% full |
 
-A computer shows as offline after 60 seconds without a report.
+A computer shows as offline after 60 seconds without a report. A core counts as in use at 50% load or more.
 
 CPU load never changes the color, because some computers, such as miners, are meant to run flat out. A fan at rest on a cool Pi 5 is also normal. "Earlier" warnings clear when the computer restarts, since that's when the firmware resets them.
 
-## Known issues in 0.1.0
+## Known limits
 
-- USB fans can't report their speed, so they show "No reading".
-- Some boards report 0 RPM with no fan on the fan connector. They show "Resting", then wrongly warn that the fan isn't spinning at 60°C.
-- Cards are always in alphabetical order, and their size is fixed.
-- The temperature trend line makes tiny changes look bigger than they are.
-- The token prompt hides what you paste. If a report is refused with HTTP 401, run the installer again and paste carefully.
+- USB fans can't report their speed, so they show "Not reported".
+- A fan's "Fan effort" and the "Voltage" row only appear on boards that report them. Voltage needs a Pi 5.
+- Your card layout lives in one browser.
 
 ## Security
 

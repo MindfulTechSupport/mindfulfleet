@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the Mindful Fleet reporter as a service. Run with sudo.
 # Usage: sudo ./install-reporter.sh http://HUB-ADDRESS:8742
-# It asks for the fleet token, or reads it from MINDFUL_FLEET_TOKEN.
+# It reads the fleet token from MINDFUL_FLEET_TOKEN, reuses an installed one, or asks.
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
@@ -13,9 +13,11 @@ case "$HUB" in
 esac
 
 TOKEN="${MINDFUL_FLEET_TOKEN:-}"
+if [ -z "$TOKEN" ] && [ -f /etc/mindful-fleet/reporter.env ]; then
+  TOKEN="$(sed -n 's/^MINDFUL_FLEET_TOKEN=//p' /etc/mindful-fleet/reporter.env)"
+fi
 if [ -z "$TOKEN" ]; then
-  read -rsp "Fleet token: " TOKEN
-  echo
+  read -rp "Fleet token: " TOKEN </dev/tty
 fi
 [ -n "$TOKEN" ] || { echo "A fleet token is required." >&2; exit 1; }
 

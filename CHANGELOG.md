@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (2026-11-03)
+
+- Card size slider, your own card order, and groups, saved in your browser.
+- Shows how many cores are in use, with each core's load now and its 30-minute average.
+- Graphics with numbers for CPU, fan effort, and voltage. Pi 5 boards report voltage.
+- Fixed a false warning on boards that report 0 RPM with no fan attached.
+- Calmer temperature trend line.
+- Cards sort in number order, including spelled-out names like BrainOne and BrainTwo.
+- One-line install and update from GitHub. The token prompt now shows what you paste.
+
 ## 0.1.0 (2026-11-02)
 
 First version.

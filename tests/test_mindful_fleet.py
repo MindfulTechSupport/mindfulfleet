@@ -22,7 +22,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.1.0", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.0", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -50,12 +50,26 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(issue, "It's running warm at 77°C.")
 
     def test_fan_resting_while_cool_is_fine(self):
-        result = health.assess(report(temp_c=45.0, fan_rpm=0), 5)
+        result = health.assess(report(temp_c=45.0, fan_rpm=0), 5, fan_max_rpm=5000)
         self.assertEqual((result["status"], result["fan"]["text"]), ("ok", "Resting"))
 
     def test_stopped_fan_while_warm_is_flagged(self):
-        result = health.assess(report(temp_c=65.0, fan_rpm=0), 5)
+        result = health.assess(report(temp_c=65.0, fan_rpm=0), 5, fan_max_rpm=5000)
         self.assertEqual((result["status"], result["fan"]["text"]), ("warn", "Not spinning"))
+
+    def test_zero_rpm_on_a_board_never_seen_spinning_is_not_a_warning(self):
+        result = health.assess(report(temp_c=75.0, fan_rpm=0), 5)
+        self.assertEqual(result["fan"]["text"], "No fan detected")
+        self.assertFalse([i for i in result["issues"] if "fan" in i["text"]])
+
+    def test_fan_percent_uses_board_value_then_fastest_seen(self):
+        self.assertEqual(health.assess(report(fan_percent=70), 5, 5000)["fan"]["percent"], 70)
+        self.assertEqual(health.assess(report(fan_rpm=2500), 5, 5000)["fan"]["percent"], 50)
+        self.assertIsNone(health.assess(report(fan_rpm=None), 5)["fan"]["percent"])
+
+    def test_cores_in_use(self):
+        cpu = health.assess(report(cpu_per_core=[100.0, 99.0, 98.0, 3.0]), 5)["cpu"]
+        self.assertEqual((cpu["busy"], cpu["total"], cpu["average"]), (3, 4, 75.0))
 
     def test_no_fan_reading_is_not_alarming(self):
         self.assertEqual(self.status(fan_rpm=None), "ok")
@@ -128,6 +142,20 @@ class ReporterTests(unittest.TestCase):
         before = {0: (0, 0), 1: (0, 0)}
         after = reporter.read_cpu_times(str(self.root))
         self.assertEqual(reporter.cpu_percent(before, after), [20.0, 0.0])
+
+    def test_fan_percent_and_volts(self):
+        (self.root / "sys/class/hwmon/hwmon2/pwm1").write_text("255\n")
+        self.assertEqual(reporter.read_fan_percent(str(self.root)), 100)
+
+        class Result:
+            returncode = 0
+            stdout = "     EXT5V_V volt(24)=5.13600000V\n"
+        self.assertEqual(reporter.read_input_volts(lambda *a, **k: Result()), 5.14)
+
+        class Old:
+            returncode = 0
+            stdout = "error=2 error_msg=\"Invalid arguments\"\n"
+        self.assertIsNone(reporter.read_input_volts(lambda *a, **k: Old()))
 
     def test_missing_files_give_none(self):
         empty = tempfile.mkdtemp(dir=self.dir.name)
@@ -222,6 +250,16 @@ class HubTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(self.base + path)
             self.assertEqual(caught.exception.code, 404)
+
+
+class OrderTests(unittest.TestCase):
+    def test_spelled_and_written_numbers_sort_in_order(self):
+        names = ["BrainTwo", "BrainFive", "BrainOne", "pi10", "pi2"]
+        self.assertEqual(sorted(names, key=hub._natural_key), ["BrainOne", "BrainTwo", "BrainFive", "pi2", "pi10"])
+
+    def test_core_averages(self):
+        self.assertEqual(hub.core_averages([[100, 0], [50, 0]]), [75.0, 0.0])
+        self.assertEqual(hub.core_averages([]), [])
 
 
 class StateTests(unittest.TestCase):

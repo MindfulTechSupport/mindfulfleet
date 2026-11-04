@@ -9,6 +9,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -18,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_INTERVAL = 15
 
 
@@ -58,6 +59,30 @@ def read_fan_rpm(root="/"):
         except (OSError, ValueError):
             continue
     return None
+
+
+def read_fan_percent(root="/"):
+    """How hard the board is driving its fan, from 0 to 100, or None if it isn't controlling one."""
+    pattern = os.path.join(root, "sys/class/hwmon/hwmon*/pwm1")
+    for path in sorted(glob.glob(pattern)):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return round(int(f.read().strip()) * 100 / 255)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def read_input_volts(run=subprocess.run):
+    """Voltage arriving at the board. Only a Pi 5's power chip reports this."""
+    try:
+        result = run(["vcgencmd", "pmic_read_adc", "EXT5V_V"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return None
+        match = re.search(r"EXT5V_V\s+volt\(\d+\)=([\d.]+)V", result.stdout)
+        return round(float(match.group(1)), 2) if match else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def read_cpu_times(root="/"):
@@ -156,6 +181,8 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "temp_c": read_temperature_c(root),
         "throttled": read_throttled(run),
         "fan_rpm": read_fan_rpm(root),
+        "fan_percent": read_fan_percent(root),
+        "input_volts": read_input_volts(run),
         "cpu_per_core": cpu_percent(cpu_before, cpu_after),
         "mem_total": mem_total,
         "mem_used": mem_used,

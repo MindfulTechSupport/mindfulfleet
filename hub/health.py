@@ -9,6 +9,7 @@ OFFLINE_AFTER_SECONDS = 60
 
 TEMP_WARN, TEMP_BAD = 70, 80
 FAN_EXPECTED_ABOVE = 60  # A Pi 5's fan can rest when cool, so 0 RPM is only odd once it's warm.
+CORE_BUSY_PERCENT = 50
 MEM_WARN, MEM_BAD = 85, 95
 DISK_WARN, DISK_BAD = 80, 90
 
@@ -77,7 +78,35 @@ def assess_throttle(bits):
     return speed[0], speed[1], power[0], power[1], issues
 
 
-def assess(report, age_seconds):
+def assess_cpu(cores):
+    """Average load, and how many cores count as in use."""
+    if not cores:
+        return {"average": None, "busy": 0, "total": 0}
+    return {
+        "average": round(sum(cores) / len(cores), 1),
+        "busy": sum(1 for load in cores if load >= CORE_BUSY_PERCENT),
+        "total": len(cores),
+    }
+
+
+def assess_fan(fan, percent, temp, fan_max_rpm):
+    """Return (level, text, percent, issue). Some boards report 0 RPM with no fan attached,
+    so 0 only counts as a stopped fan on a Pi whose fan has been seen spinning."""
+    if fan is None:
+        return OK, "Not reported", None, None
+    if fan > 0:
+        if percent is None and fan_max_rpm:
+            percent = min(100, round(100 * fan / fan_max_rpm))
+        return OK, f"{fan:,} RPM", percent, None
+    if not fan_max_rpm:
+        return OK, "No fan detected", None, None
+    if temp is not None and temp >= FAN_EXPECTED_ABOVE:
+        issue = f"The fan isn't spinning at {_whole(temp)}°C. Check that the cooler is plugged in."
+        return WARN, "Not spinning", 0, issue
+    return OK, "Resting", 0, None
+
+
+def assess(report, age_seconds, fan_max_rpm=0):
     """Return the health summary shown on a card."""
     issues = []
     temp = report.get("temp_c")
@@ -91,15 +120,9 @@ def assess(report, age_seconds):
     elif temp_level == WARN:
         issues.append((WARN, f"It's running warm at {_whole(temp)}°C."))
 
-    if fan is None:
-        fan_level, fan_text = OK, "No reading"
-    elif fan > 0:
-        fan_level, fan_text = OK, f"{fan:,} RPM"
-    elif temp is not None and temp >= FAN_EXPECTED_ABOVE:
-        fan_level, fan_text = WARN, "Not spinning"
-        issues.append((WARN, f"The fan isn't spinning at {_whole(temp)}°C. Check that the cooler is plugged in."))
-    else:
-        fan_level, fan_text = OK, "Resting"
+    fan_level, fan_text, fan_percent, fan_issue = assess_fan(fan, report.get("fan_percent"), temp, fan_max_rpm)
+    if fan_issue:
+        issues.append((fan_level, fan_issue))
 
     speed_level, speed_text, power_level, power_text, throttle_issues = assess_throttle(report.get("throttled"))
     issues.extend(throttle_issues)
@@ -125,9 +148,10 @@ def assess(report, age_seconds):
         "online": online,
         "issues": [{"level": level, "text": text} for level, text in issues],
         "temp": {"level": temp_level, "value": temp},
-        "fan": {"level": fan_level, "text": fan_text},
+        "fan": {"level": fan_level, "text": fan_text, "percent": fan_percent},
         "speed": {"level": speed_level, "text": speed_text},
-        "power": {"level": power_level, "text": power_text},
+        "power": {"level": power_level, "text": power_text, "volts": report.get("input_volts")},
+        "cpu": assess_cpu(report.get("cpu_per_core")),
         "memory": {"level": mem_level, "percent": mem_pct},
         "disk": {"level": disk_level, "percent": disk_pct},
     }

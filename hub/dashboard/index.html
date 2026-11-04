@@ -11,13 +11,25 @@
     <p class="brand">Mindful Fleet</p>
     <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
     <p id="connection" class="connection" role="status" hidden></p>
+    <div class="tools">
+      <label class="size">Card size
+        <input id="size" type="range" min="50" max="130" step="5" value="100">
+      </label>
+      <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
+      <form id="new-group" class="new-group" hidden>
+        <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
+        <button type="submit">Add group</button>
+        <button id="reset" type="button">Reset layout</button>
+      </form>
+    </div>
+    <p id="arrange-help" class="help" hidden>Drag cards to move them, or use the arrows and group menu on each card. Your layout is saved in this browser.</p>
   </header>
   <main>
     <div id="empty" class="empty" hidden>
       <h2>No computers have checked in yet</h2>
       <p>Install the reporter on your first one. It shows up here within about 15 seconds.</p>
     </div>
-    <div id="fleet" class="fleet"></div>
+    <div id="fleet"></div>
   </main>
   <footer class="foot">
     <p>Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. Mindful Fleet is an independent project, not made or endorsed by Raspberry Pi Ltd.</p>

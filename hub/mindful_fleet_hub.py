@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -81,6 +81,8 @@ def clean_report(raw):
         "temp_c": _number(raw.get("temp_c"), -50, 200),
         "throttled": _number(raw.get("throttled"), 0, 2**32),
         "fan_rpm": _number(raw.get("fan_rpm"), 0, 100000),
+        "fan_percent": _number(raw.get("fan_percent"), 0, 100),
+        "input_volts": _number(raw.get("input_volts"), 0, 60),
         "cpu_per_core": [_number(c, 0, 100) for c in cores],
         "mem_total": _number(raw.get("mem_total"), 0, terabytes),
         "mem_used": _number(raw.get("mem_used"), 0, terabytes),
@@ -109,6 +111,8 @@ class Fleet:
                     "report": clean_report(saved["report"]),
                     "last_seen": float(saved["last_seen"]),
                     "history": deque(saved.get("history", []), maxlen=HISTORY_SAMPLES),
+                    "core_history": deque(saved.get("core_history", []), maxlen=HISTORY_SAMPLES),
+                    "fan_max_rpm": saved.get("fan_max_rpm", 0),
                 }
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"Ignoring unreadable state file: {error}", file=sys.stderr)
@@ -119,7 +123,13 @@ class Fleet:
             return
         with self._lock:
             data = {
-                pi_id: {"report": p["report"], "last_seen": p["last_seen"], "history": list(p["history"])}
+                pi_id: {
+                    "report": p["report"],
+                    "last_seen": p["last_seen"],
+                    "history": list(p["history"]),
+                    "core_history": list(p["core_history"]),
+                    "fan_max_rpm": p["fan_max_rpm"],
+                }
                 for pi_id, p in self._pis.items()
             }
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,11 +144,18 @@ class Fleet:
             if pi is None:
                 if len(self._pis) >= MAX_PIS:
                     return False
-                pi = self._pis[report["id"]] = {"history": deque(maxlen=HISTORY_SAMPLES)}
+                pi = self._pis[report["id"]] = {
+                    "history": deque(maxlen=HISTORY_SAMPLES),
+                    "core_history": deque(maxlen=HISTORY_SAMPLES),
+                    "fan_max_rpm": 0,
+                }
             pi["report"] = report
             pi["last_seen"] = self._clock()
             if report["temp_c"] is not None:
                 pi["history"].append(report["temp_c"])
+            if report["cpu_per_core"]:
+                pi["core_history"].append(report["cpu_per_core"])
+            pi["fan_max_rpm"] = max(pi["fan_max_rpm"], report["fan_rpm"] or 0)
         return True
 
     def age_all(self, seconds):
@@ -150,22 +167,40 @@ class Fleet:
     def snapshot(self):
         now = self._clock()
         with self._lock:
-            pis = [(p["report"], p["last_seen"], list(p["history"])) for p in self._pis.values()]
+            pis = [(p["report"], p["last_seen"], list(p["history"]), list(p["core_history"]), p["fan_max_rpm"])
+                   for p in self._pis.values()]
         cards = []
-        for report, last_seen, history in pis:
+        for report, last_seen, history, core_history, fan_max_rpm in pis:
             age = max(0, now - last_seen)
             cards.append({
                 **report,
                 "age_s": round(age),
                 "history": history,
-                "health": health.assess(report, age),
+                "core_average": core_averages(core_history),
+                "health": health.assess(report, age, fan_max_rpm),
             })
         cards.sort(key=lambda c: _natural_key(c["hostname"]))
         return {"version": VERSION, "server_time": now, "pis": cards}
 
 
+def core_averages(samples):
+    """Each core's average load over the remembered samples."""
+    width = max((len(sample) for sample in samples), default=0)
+    averages = []
+    for index in range(width):
+        values = [sample[index] for sample in samples if index < len(sample)]
+        averages.append(round(sum(values) / len(values), 1))
+    return averages
+
+
+_NUMBER_WORDS = {word: index + 1 for index, word in enumerate(
+    "one two three four five six seven eight nine ten eleven twelve".split())}
+
+
 def _natural_key(text):
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
+    """Sort so pi2 comes before pi10, and BrainOne before BrainTwo."""
+    spelled = re.sub("|".join(_NUMBER_WORDS), lambda m: f"{_NUMBER_WORDS[m.group()]:02d}", text.lower())
+    return [(0, int(part)) if part.isdigit() else (1, part) for part in re.split(r"(\d+)", spelled) if part]
 
 
 def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
@@ -245,6 +280,8 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "temp_c": round(temp + random.uniform(-0.6, 0.6), 1),
         "throttled": throttled,
         "fan_rpm": fan if fan is not None else 2400 + random.randint(-80, 80),
+        "fan_percent": None if fan == 0 else 45,
+        "input_volts": round(5.08 + random.uniform(-0.02, 0.02), 2),
         "cpu_per_core": cpu or [round(random.uniform(8, 30), 1) for _ in range(4)],
         "mem_total": 8 * gib,
         "mem_used": 8 * gib * mem // 100,
@@ -260,12 +297,13 @@ def run_demo(fleet, stop):
     cast = (
         ("garage-pi", 52, {}),
         ("pi-hole", 47, {}),
-        ("workshop-pi", 76, {"cpu": busy, "fan": 0}),
+        ("workshop-pi", 76, {"cpu": [100.0, 100.0, 100.0, 2.0], "fan": 0}),
         ("attic-pi", 83, {"cpu": busy, "throttled": 0x60006}),
         ("media-pi", 49, {"disk": 93, "throttled": 0x10000, "fan": 0, "uptime": 7200}),
     )
+    fleet.record(demo_report("workshop-pi", 76, cpu=busy))  # Its fan worked once, so 0 RPM now means trouble.
     fleet.record(demo_report("old-shed-pi", 44))
-    fleet.age_all(660)  # Only old-shed-pi exists so far, so only it goes quiet.
+    fleet.age_all(660)  # Only these two exist so far, and workshop-pi reports again below.
     for _ in range(40):
         for name, temp, kwargs in cast:
             fleet.record(demo_report(name, temp, **kwargs))

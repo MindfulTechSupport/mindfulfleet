@@ -2,7 +2,34 @@
 
 const REFRESH_MS = 5000;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const LAYOUT_KEY = "mindful-fleet-layout";
 const MOODS = { ok: "Doing fine", warn: "Needs a look", bad: "Needs help now", offline: "Offline" };
+const TREND_MIN_RANGE = 10; // Degrees. Keeps a half-degree wiggle looking like the small thing it is.
+const LOW_VOLTS = 4.63;
+const HIGH_VOLTS = 5.25;
+const NOMINAL_VOLTS = 5;
+
+const layout = loadLayout();
+let arranging = false;
+let dragging = null;
+let latestPis = [];
+
+function loadLayout() {
+  const empty = { size: 100, order: [], groups: [], members: {} };
+  try {
+    return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
+  } catch (error) {
+    return empty;
+  }
+}
+
+function saveLayout() {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+  } catch (error) {
+    // Private windows can refuse storage. The layout still works until the page closes.
+  }
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -15,6 +42,15 @@ function svg(tag, attrs, parent) {
   const node = document.createElementNS(SVG_NS, tag);
   for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
   if (parent) parent.appendChild(node);
+  return node;
+}
+
+function button(label, title, onClick) {
+  const node = el("button", "small", label);
+  node.type = "button";
+  node.title = title;
+  node.setAttribute("aria-label", title);
+  node.addEventListener("click", onClick);
   return node;
 }
 
@@ -46,11 +82,12 @@ function mascot(status) {
 
 function sparkline(history) {
   if (history.length < 2) return el("div", "spark");
-  const low = Math.min(...history) - 2;
-  const high = Math.max(...history) + 2;
+  const middle = (Math.min(...history) + Math.max(...history)) / 2;
+  const range = Math.max(TREND_MIN_RANGE, Math.max(...history) - Math.min(...history) + 2);
+  const low = middle - range / 2;
   const root = svg("svg", { viewBox: "0 0 100 40", preserveAspectRatio: "none", class: "spark", role: "img", "aria-label": `Temperature over the last ${history.length} readings` });
   const points = history.map((value, i) =>
-    `${(i / (history.length - 1) * 100).toFixed(1)},${(38 - (value - low) / (high - low) * 36).toFixed(1)}`);
+    `${(i / (history.length - 1) * 100).toFixed(1)},${(38 - (value - low) / range * 36).toFixed(1)}`);
   svg("polyline", { points: points.join(" ") }, root);
   return root;
 }
@@ -71,40 +108,92 @@ function duration(seconds) {
   return `${minutes} min`;
 }
 
-function meter(item, used, total) {
+function meter(percent, level, label, title) {
   const wrap = el("dd", "meter");
-  if (item.percent == null) {
+  if (percent == null) {
     wrap.textContent = "No reading";
     return wrap;
   }
   const bar = el("div", "bar");
-  const fill = el("div", `fill ${item.level}`);
-  fill.style.width = `${Math.min(100, item.percent)}%`;
+  const fill = el("div", `fill ${level || ""}`);
+  fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
   bar.appendChild(fill);
-  wrap.title = `${bytes(used)} of ${bytes(total)}`;
-  wrap.append(bar, el("span", item.level, `${Math.round(item.percent)}%`));
+  if (title) wrap.title = title;
+  wrap.append(bar, el("span", level || "", label));
   return wrap;
 }
 
-function cores(values) {
-  const dd = el("dd", "cores");
-  const average = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
-  dd.setAttribute("role", "img");
-  dd.setAttribute("aria-label", average == null ? "No reading" : `Average ${Math.round(average)} percent across ${values.length} cores`);
-  dd.title = values.map((value, i) => `Core ${i + 1}: ${Math.round(value)}%`).join("\n");
-  for (const value of values) {
-    const core = el("div", "core");
+function coreGrid(pi) {
+  const grid = el("div", "cores");
+  pi.cpu_per_core.forEach((value, i) => {
+    const average = pi.core_average[i];
+    const cell = el("div", "core");
+    cell.title = `Core ${i + 1}: ${Math.round(value)}% now, ${average == null ? "no" : `${Math.round(average)}%`} average over 30 minutes`;
+    const column = el("div", "core-bar");
     const level = el("i");
     level.style.height = `${value}%`;
-    core.appendChild(level);
-    dd.appendChild(core);
-  }
-  return dd;
+    column.appendChild(level);
+    cell.append(column, el("strong", "", `${Math.round(value)}%`));
+    if (average != null) cell.appendChild(el("small", "", `avg ${Math.round(average)}%`));
+    grid.appendChild(cell);
+  });
+  return grid;
 }
 
-function card(pi) {
+function arrangeBar(pi, section) {
+  const bar = el("div", "arrange-bar");
+  const index = section.findIndex((other) => other.id === pi.id);
+  const earlier = button("←", `Move ${pi.hostname} earlier`, () => moveWithin(section, index, index - 1));
+  const later = button("→", `Move ${pi.hostname} later`, () => moveWithin(section, index, index + 1));
+  earlier.disabled = index === 0;
+  later.disabled = index === section.length - 1;
+
+  const select = el("select");
+  select.setAttribute("aria-label", `Group for ${pi.hostname}`);
+  const none = el("option", "", "No group");
+  none.value = "";
+  select.appendChild(none);
+  for (const group of layout.groups) {
+    const option = el("option", "", group.name);
+    option.value = group.id;
+    select.appendChild(option);
+  }
+  select.value = layout.members[pi.id] || "";
+  select.addEventListener("change", () => {
+    setGroup(pi.id, select.value);
+    select.blur();
+    commit();
+  });
+  bar.append(earlier, later, select);
+  return bar;
+}
+
+function card(pi, section) {
   const h = pi.health;
   const article = el("article", `pi ${h.status}`);
+
+  if (arranging) {
+    article.draggable = true;
+    article.classList.add("movable");
+    article.addEventListener("dragstart", (event) => {
+      dragging = pi.id;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", pi.id); // Firefox won't start a drag without this.
+      setTimeout(() => article.classList.add("dragging")); // Changing the card during dragstart can cancel the drag.
+    });
+    article.addEventListener("dragend", () => {
+      dragging = null;
+      render();
+    });
+    article.addEventListener("dragover", (event) => event.preventDefault());
+    article.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const moving = dragging;
+      dragging = null;
+      if (moving && moving !== pi.id) placeBefore(moving, pi.id);
+    });
+  }
 
   const head = el("div", "pi-head");
   const title = el("div", "pi-title");
@@ -113,6 +202,7 @@ function card(pi) {
   head.append(mascot(h.status), title);
 
   const body = el("div", h.online ? "pi-body" : "pi-body stale");
+  if (arranging) body.appendChild(arrangeBar(pi, section));
   const heat = el("div", "heat");
   const temp = h.temp.value == null ? "—" : `${Math.round(h.temp.value)}°C`;
   heat.append(el("div", `degrees ${h.temp.level}`, temp), sparkline(pi.history));
@@ -126,22 +216,156 @@ function card(pi) {
   }
 
   const facts = el("dl", "facts");
-  const row = (label, value) => {
-    facts.appendChild(el("dt", "", label));
-    facts.appendChild(value);
-  };
+  const row = (label, value) => facts.append(el("dt", "", label), value);
   const text = (item) => el("dd", item.level, item.text);
+
   row("Fan", text(h.fan));
+  if (h.fan.percent != null) row("Fan effort", meter(h.fan.percent, h.fan.percent >= 100 ? "warn" : "", `${h.fan.percent}%`, "How hard the board is driving the fan"));
   row("Speed", text(h.speed));
   row("Power", text(h.power));
-  row("CPU", cores(pi.cpu_per_core));
-  row("Memory", meter(h.memory, pi.mem_used, pi.mem_total));
-  row("Storage", meter(h.disk, pi.disk_used, pi.disk_total));
+  if (h.power.volts != null) {
+    const position = (h.power.volts - LOW_VOLTS) / (HIGH_VOLTS - LOW_VOLTS) * 100;
+    row("Voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
+  }
+  if (h.cpu.total) {
+    row("CPU", meter(h.cpu.average, "", `${Math.round(h.cpu.average)}%`));
+    row("Cores in use", el("dd", "", `${h.cpu.busy} of ${h.cpu.total}`));
+  }
+  row("Memory", meter(h.memory.percent, h.memory.level, `${Math.round(h.memory.percent)}%`, `${bytes(pi.mem_used)} of ${bytes(pi.mem_total)}`));
+  row("Storage", meter(h.disk.percent, h.disk.level, `${Math.round(h.disk.percent)}%`, `${bytes(pi.disk_used)} of ${bytes(pi.disk_total)}`));
   row("Running for", el("dd", "", duration(pi.uptime_s)));
   body.appendChild(facts);
+  if (pi.cpu_per_core.length) body.appendChild(coreGrid(pi));
 
   article.append(head, body);
   return article;
+}
+
+/* Layout changes */
+
+function orderIndex(pi, fallback) {
+  const index = layout.order.indexOf(pi.id);
+  return index === -1 ? layout.order.length + fallback : index;
+}
+
+function sortedPis() {
+  return latestPis
+    .map((pi, i) => ({ pi, rank: orderIndex(pi, i) }))
+    .sort((a, b) => a.rank - b.rank)
+    .map((item) => item.pi);
+}
+
+function commit() {
+  saveLayout();
+  render();
+}
+
+function setGroup(piId, groupId) {
+  if (groupId) layout.members[piId] = groupId;
+  else delete layout.members[piId];
+}
+
+function moveWithin(section, from, to) {
+  if (to < 0 || to >= section.length) return;
+  const ids = sortedPis().map((pi) => pi.id);
+  const moving = section[from].id;
+  const target = section[to].id;
+  ids.splice(ids.indexOf(moving), 1);
+  ids.splice(ids.indexOf(target) + (to > from ? 1 : 0), 0, moving);
+  layout.order = ids;
+  commit();
+}
+
+function placeBefore(movingId, targetId) {
+  const ids = sortedPis().map((pi) => pi.id);
+  ids.splice(ids.indexOf(movingId), 1);
+  ids.splice(ids.indexOf(targetId), 0, movingId);
+  layout.order = ids;
+  setGroup(movingId, layout.members[targetId] || "");
+  commit();
+}
+
+function addGroup(name) {
+  layout.groups.push({ id: `g${Date.now().toString(36)}`, name });
+  commit();
+}
+
+function moveGroup(index, change) {
+  const [group] = layout.groups.splice(index, 1);
+  layout.groups.splice(index + change, 0, group);
+  commit();
+}
+
+function removeGroup(groupId) {
+  layout.groups = layout.groups.filter((group) => group.id !== groupId);
+  for (const [piId, member] of Object.entries(layout.members)) {
+    if (member === groupId) delete layout.members[piId];
+  }
+  commit();
+}
+
+/* Drawing */
+
+function groupHeader(group, pis, index) {
+  const header = el("div", "group-head");
+  if (arranging && group) {
+    const name = el("input", "group-rename");
+    name.value = group.name;
+    name.maxLength = 40;
+    name.setAttribute("aria-label", "Group name");
+    name.addEventListener("change", () => {
+      group.name = name.value.trim() || group.name;
+      name.blur();
+      commit();
+    });
+    const up = button("↑", `Move ${group.name} up`, () => moveGroup(index, -1));
+    const down = button("↓", `Move ${group.name} down`, () => moveGroup(index, 1));
+    up.disabled = index === 0;
+    down.disabled = index === layout.groups.length - 1;
+    header.append(name, up, down, button("Remove group", `Remove ${group.name}. Its cards stay on the page`, () => removeGroup(group.id)));
+  } else {
+    header.appendChild(el("h2", "", group ? group.name : "Not in a group"));
+  }
+  if (pis.length) {
+    const fine = pis.filter((pi) => pi.health.status === "ok").length;
+    header.appendChild(el("span", "group-count", `${fine} of ${pis.length} doing fine`));
+  }
+  return header;
+}
+
+function section(group, pis, index) {
+  const wrap = el("section", "group");
+  if (layout.groups.length) wrap.appendChild(groupHeader(group, pis, index));
+  const grid = el("div", "fleet");
+  grid.style.zoom = layout.size / 100;
+  grid.replaceChildren(...pis.map((pi) => card(pi, pis)));
+  if (arranging) {
+    grid.classList.add("drop-zone");
+    if (!pis.length) grid.appendChild(el("p", "drop-note", "Drop a card here"));
+    wrap.addEventListener("dragover", (event) => event.preventDefault());
+    wrap.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (!dragging) return;
+      setGroup(dragging, group ? group.id : "");
+      dragging = null;
+      commit();
+    });
+  }
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function render() {
+  const pis = sortedPis();
+  const known = new Set(layout.groups.map((group) => group.id));
+  const sections = [];
+  layout.groups.forEach((group, index) => {
+    const members = pis.filter((pi) => layout.members[pi.id] === group.id);
+    if (members.length || arranging) sections.push(section(group, members, index));
+  });
+  const loose = pis.filter((pi) => !known.has(layout.members[pi.id]));
+  if (loose.length || (arranging && layout.groups.length)) sections.push(section(null, loose, -1));
+  document.getElementById("fleet").replaceChildren(...sections);
 }
 
 function headline(pis) {
@@ -157,22 +381,65 @@ function headline(pis) {
   return `${fine} of ${pis.length} doing fine. ${named} ${verb} a look.`;
 }
 
+function busyEditing() {
+  const active = document.activeElement;
+  return dragging || (active && active.closest("#fleet") && ["INPUT", "SELECT"].includes(active.tagName));
+}
+
 async function refresh() {
   const connection = document.getElementById("connection");
   try {
     const response = await fetch("/api/fleet", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { pis } = await response.json();
+    latestPis = pis;
     connection.hidden = true;
     document.getElementById("empty").hidden = pis.length > 0;
     document.getElementById("summary").textContent = pis.length ? headline(pis) : "Your fleet is empty.";
     document.title = pis.some((pi) => pi.health.status !== "ok") ? "⚠ Mindful Fleet" : "Mindful Fleet";
-    document.getElementById("fleet").replaceChildren(...pis.map(card));
+    if (!busyEditing()) render();
   } catch (error) {
     connection.textContent = "Can't reach the hub. These numbers may be out of date. Retrying every 5 seconds.";
     connection.hidden = false;
   }
 }
 
+function setUpTools() {
+  const size = document.getElementById("size");
+  size.value = layout.size;
+  size.addEventListener("input", () => {
+    layout.size = Number(size.value);
+    saveLayout();
+    render();
+  });
+
+  const toggle = document.getElementById("arrange");
+  toggle.addEventListener("click", () => {
+    arranging = !arranging;
+    toggle.setAttribute("aria-pressed", String(arranging));
+    toggle.textContent = arranging ? "Done arranging" : "Arrange cards";
+    document.getElementById("new-group").hidden = !arranging;
+    document.getElementById("arrange-help").hidden = !arranging;
+    render();
+  });
+
+  const name = document.getElementById("group-name");
+  document.getElementById("new-group").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = name.value.trim();
+    if (!value) return;
+    name.value = "";
+    addGroup(value);
+  });
+
+  document.getElementById("reset").addEventListener("click", () => {
+    layout.order = [];
+    layout.groups = [];
+    layout.members = {};
+    commit();
+  });
+}
+
+setUpTools();
 refresh();
 setInterval(refresh, REFRESH_MS);
