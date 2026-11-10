@@ -19,7 +19,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
+XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
 
 
@@ -216,6 +217,50 @@ def busiest_process(before, after, ticks_per_second=None):
     return best_name, round(100 * best_ticks / ticks_per_second / (after[1] - before[1]), 1)
 
 
+def read_xmrig(url, token=None, timeout=2):
+    """Mining numbers from XMRig's built-in web API, which it serves only on this computer.
+
+    Read-only: the API is turned on in "restricted" mode, so it can't change the miner.
+    Nothing here is sent anywhere except to the hub, and the wallet address isn't read.
+    """
+    if not url or url == "off":
+        return {}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    def get(path):
+        request = urllib.request.Request(url.rstrip("/") + path, headers=headers)
+        with opener.open(request, timeout=timeout) as response:
+            return json.loads(response.read(500_000))
+
+    try:
+        summary = get("/2/summary")
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(summary, dict):
+        return {}
+    rates = (summary.get("hashrate") or {}).get("total") or []
+    rate = lambda i: rates[i] if len(rates) > i and isinstance(rates[i], (int, float)) else None
+    results = summary.get("results") or {}
+    connection = summary.get("connection") or {}
+    found = {
+        "hashrate": rate(1) if rate(1) is not None else rate(0),
+        "hashrate_15m": rate(2),
+        "shares_good": results.get("shares_good"),
+        "shares_total": results.get("shares_total"),
+        "pool": connection.get("pool"),
+        "algo": summary.get("algo"),
+        "miner_version": summary.get("version"),
+    }
+    try:
+        for backend in get("/2/backends"):
+            if backend.get("type") == "cpu" and backend.get("enabled"):
+                found["mining_threads"] = len(backend.get("threads") or [])
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    return found
+
+
 def read_core_volts(run=subprocess.run):
     try:
         result = run(["vcgencmd", "measure_volts", "core"], capture_output=True, text=True, timeout=5)
@@ -338,7 +383,7 @@ def local_ip(hub_url):
 
 def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subprocess.run,
             hostname=None, net_before=None, net_after=None, disk_before=None, disk_after=None,
-            procs_before=None, procs_after=None):
+            procs_before=None, procs_after=None, xmrig_url=None, xmrig_token=None):
     hostname = hostname or socket.gethostname()
     mem_total, mem_used = read_memory(root)
     swap_total, swap_used = read_swap(root)
@@ -375,6 +420,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "net_rx_bps": net_in,
         "net_tx_bps": net_out,
         "core_volts": read_core_volts(run),
+        **read_xmrig(xmrig_url, xmrig_token),
         "wifi_dbm": read_wifi_dbm(root),
         "disk_read_bps": disk_in,
         "disk_write_bps": disk_out,
@@ -421,7 +467,9 @@ def main(argv=None):
         current = sample()
         report = collect(args.hub or "", previous[0], current[0], net_before=previous[1], net_after=current[1],
                          disk_before=previous[2], disk_after=current[2],
-                         procs_before=previous[3], procs_after=current[3])
+                         procs_before=previous[3], procs_after=current[3],
+                         xmrig_url=os.environ.get("MINDFUL_FLEET_XMRIG", XMRIG_DEFAULT),
+                         xmrig_token=os.environ.get("MINDFUL_FLEET_XMRIG_TOKEN"))
         previous = current
         if args.print_only:
             print(json.dumps(report, indent=2))

@@ -23,7 +23,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.3", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.4", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -367,6 +367,80 @@ class HubTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(self.base + path)
             self.assertEqual(caught.exception.code, 404)
+
+
+class XmrigTests(unittest.TestCase):
+    def serve(self, routes, token=None):
+        from http.server import BaseHTTPRequestHandler
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if token and self.headers.get("Authorization") != f"Bearer {token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+                body = routes.get(self.path)
+                self.send_response(200 if body is not None else 404)
+                self.end_headers()
+                if body is not None:
+                    self.wfile.write(json.dumps(body).encode())
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}"
+
+    def test_reads_summary_and_threads(self):
+        url = self.serve({
+            "/2/summary": {"hashrate": {"total": [1210.5, 1198.2, 1201.0]}, "results": {"shares_good": 99, "shares_total": 100},
+                           "connection": {"pool": "pool.example.com:10128"}, "algo": "rx/0", "version": "6.24.0"},
+            "/2/backends": [{"type": "cpu", "enabled": True, "threads": [{}, {}, {}]}, {"type": "opencl", "enabled": False}],
+        }, token="secret")
+        found = reporter.read_xmrig(url, "secret")
+        self.assertEqual((found["hashrate"], found["hashrate_15m"], found["mining_threads"]), (1198.2, 1201.0, 3))
+        self.assertEqual((found["shares_good"], found["shares_total"], found["pool"]), (99, 100, "pool.example.com:10128"))
+        self.assertEqual(reporter.read_xmrig(url, "wrong"), {})
+
+    def test_just_started_miner_and_no_miner(self):
+        url = self.serve({"/2/summary": {"hashrate": {"total": [None, None, None]}}})
+        self.assertIsNone(reporter.read_xmrig(url)["hashrate"])
+        self.assertEqual(reporter.read_xmrig("http://127.0.0.1:9"), {})
+        self.assertEqual(reporter.read_xmrig("off"), {})
+
+    def test_hub_keeps_best_15_minute_rate(self):
+        fleet = hub.Fleet(clock=lambda: 1000.0)
+        for rate in (1200.0, 1250.0, 1100.0):
+            fleet.record(hub.clean_report(report(hashrate=rate, hashrate_15m=rate)))
+        pi = fleet.snapshot()["pis"][0]
+        self.assertEqual((pi["hashrate"], pi["hashrate_max"], pi["averages"]["windows"]["5m"]["hashrate"]),
+                         (1100.0, 1250.0, 1183.33))
+
+
+class XmrigSetupTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("xmrig_api", ROOT / "install" / "xmrig-api.py")
+        self.api = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.api)
+        self.folder = Path(tempfile.mkdtemp())
+        (self.folder / "config.json").write_text("{}")
+
+    def miner(self, *args):
+        return {"args": [str(self.folder / "xmrig"), *args], "cwd": "/", "owner": 0, "exe": "/x"}
+
+    def test_finds_config_next_to_program(self):
+        self.assertEqual(self.api.find_config(self.miner()), str(self.folder / "config.json"))
+
+    def test_named_config_wins(self):
+        self.assertEqual(self.api.find_config(self.miner("--config=/etc/x.json")), "/etc/x.json")
+        self.assertEqual(self.api.find_config(self.miner("-c", "/etc/y.json")), "/etc/y.json")
+
+    def test_command_line_setup_has_no_config(self):
+        self.assertIsNone(self.api.find_config(self.miner("-o", "pool:1", "-u", "wallet")))
 
 
 class AverageTests(unittest.TestCase):

@@ -137,6 +137,7 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .averages tbody tr:nth-child(even) { background: color-mix(in srgb, var(--track) 35%, transparent); }
 .averages td:nth-child(2) { font-weight: 800; }
 .averages-note { margin: 6px 0 0; color: var(--soft); font-size: .78em; }
+.detail.warn-text { color: var(--warn); font-weight: 700; }
 .detail.update { color: var(--warn); font-weight: 700; }
 @media (max-width: 520px) {
   .rows { position: static; }

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -125,6 +125,14 @@ def clean_report(raw):
         "disk_write_bps": _number(raw.get("disk_write_bps"), 0, terabytes),
         "top_process": _text(raw.get("top_process"), 40),
         "top_process_cpu": _number(raw.get("top_process_cpu"), 0, 100000),
+        "hashrate": _number(raw.get("hashrate"), 0, 1e12),
+        "hashrate_15m": _number(raw.get("hashrate_15m"), 0, 1e12),
+        "mining_threads": _number(raw.get("mining_threads"), 0, 4096),
+        "shares_good": _number(raw.get("shares_good"), 0, 1e15),
+        "shares_total": _number(raw.get("shares_total"), 0, 1e15),
+        "pool": _text(raw.get("pool"), 80),
+        "algo": _text(raw.get("algo"), 30),
+        "miner_version": _text(raw.get("miner_version"), 20),
         "kernel": _text(raw.get("kernel"), 40),
     }
 
@@ -152,6 +160,7 @@ class Fleet:
                     "history": deque(saved.get("history", []), maxlen=HISTORY_SAMPLES),
                     "averages": History(saved.get("averages")),
                     "fan_max_rpm": saved.get("fan_max_rpm", 0),
+                    "hashrate_max": saved.get("hashrate_max", 0),
                 }
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"Ignoring unreadable state file: {error}", file=sys.stderr)
@@ -168,6 +177,7 @@ class Fleet:
                     "history": list(p["history"]),
                     "averages": p["averages"].to_saved(),
                     "fan_max_rpm": p["fan_max_rpm"],
+                    "hashrate_max": p["hashrate_max"],
                 }
                 for pi_id, p in self._pis.items()
             }
@@ -187,13 +197,16 @@ class Fleet:
                     "history": deque(maxlen=HISTORY_SAMPLES),
                     "averages": History(),
                     "fan_max_rpm": 0,
+                    "hashrate_max": 0,
                 }
             pi["report"] = report
             pi["last_seen"] = self._clock()
             if report["temp_c"] is not None:
                 pi["history"].append(report["temp_c"])
             pi["averages"].add(pi["last_seen"], report)
-            pi["fan_max_rpm"] = max(pi["fan_max_rpm"], report["fan_rpm"] or 0)
+            pi["fan_max_rpm"] = max(pi["fan_max_rpm"], report.get("fan_rpm") or 0)
+            # The 15-minute figure, so one lucky 10-second burst doesn't set the bar.
+            pi["hashrate_max"] = max(pi["hashrate_max"], report.get("hashrate_15m") or 0)
         return True
 
     def seed_history(self, report, when):
@@ -212,10 +225,10 @@ class Fleet:
     def snapshot(self):
         now = self._clock()
         with self._lock:
-            pis = [(p["report"], p["last_seen"], list(p["history"]), p["averages"].averages(now), p["fan_max_rpm"])
-                   for p in self._pis.values()]
+            pis = [(p["report"], p["last_seen"], list(p["history"]), p["averages"].averages(now), p["fan_max_rpm"],
+                    p["hashrate_max"]) for p in self._pis.values()]
         cards = []
-        for report, last_seen, history, averages, fan_max_rpm in pis:
+        for report, last_seen, history, averages, fan_max_rpm, hashrate_max in pis:
             age = max(0, now - last_seen)
             cards.append({
                 **report,
@@ -223,6 +236,7 @@ class Fleet:
                 "history": history,
                 "averages": averages,
                 "fan_max_rpm": fan_max_rpm,
+                "hashrate_max": hashrate_max,
                 "health": health.assess(report, age, fan_max_rpm),
             })
         cards.sort(key=lambda c: _natural_key(c["hostname"]))
@@ -418,6 +432,10 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "wifi_dbm": None if name in ("garage-pi", "attic-pi") else random.randint(-68, -52),
         "disk_read_bps": random.randint(0, 4000),
         "disk_write_bps": random.randint(2000, 30000),
+        **({"hashrate": round(sum(cpu) * 3.1 * random.uniform(0.97, 1.03), 1),
+            "hashrate_15m": round(sum(cpu) * 3.1, 1), "mining_threads": sum(1 for c in cpu if c > 50),
+            "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:10128", "algo": "rx/0",
+            "miner_version": "6.24.0"} if cpu and sum(cpu) > 250 else {}),
         "top_process": "xmrig" if sum(cpu or [0]) > 250 else "python3",
         "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),
         "kernel": "6.18.50+rpt-rpi-2712",

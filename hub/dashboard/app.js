@@ -11,7 +11,7 @@ const NOMINAL_VOLTS = 5;
 
 const ROWS = [
   ["trend", "Temperature trend"], ["fan", "Fan"], ["speed", "Speed"], ["power", "Power and voltage"],
-  ["watts", "Power use"], ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
+  ["mining", "Mining"], ["watts", "Power use"], ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
   ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["averages", "Averages"],
   ["uptime", "Running for"], ["system", "System"],
@@ -167,6 +167,13 @@ function versionBelow(version, target) {
   return false;
 }
 
+function hashes(value) {
+  if (value == null) return "—";
+  if (value >= 1e6) return `${(value / 1e6).toFixed(2)} MH/s`;
+  if (value >= 1e4) return `${(value / 1e3).toFixed(1)} kH/s`;
+  return `${Math.round(value).toLocaleString()} H/s`;
+}
+
 function energy(watts) {
   const kwhPerDay = watts * 24 / 1000;
   const cost = layout.price ? `, $${(kwhPerDay * layout.price).toFixed(2)} a day` : "";
@@ -187,6 +194,7 @@ const AVERAGE_ROWS = [
   ["temp", "Temp °C", (v) => Math.round(v)],
   ["slowed", "Slowed %", (v) => Math.round(v)],
   ["watts", "Power W", (v) => v.toFixed(1)],
+  ["hashrate", "Hashrate H/s", (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
   ["fan", "Fan RPM", (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
   ["memory", "Memory %", (v) => Math.round(v)],
   ["volts", "Input V", (v) => v.toFixed(2)],
@@ -202,7 +210,7 @@ function averagesTable(pi) {
   if (!data || !data["5m"]) return null;
   const cores = pi.cpu_per_core.length;
   const now = {
-    watts: pi.board_watts, slowed: pi.throttled == null ? null : (pi.throttled & 0b1110 ? 100 : 0),
+    watts: pi.board_watts, hashrate: pi.hashrate, slowed: pi.throttled == null ? null : (pi.throttled & 0b1110 ? 100 : 0),
     cpu: pi.health.cpu.average, clock: average(pi.cpu_mhz), load: pi.load_avg[0], temp: pi.temp_c,
     fan: pi.fan_rpm, memory: pi.health.memory.percent, volts: pi.input_volts, net_in: pi.net_rx_bps,
     net_out: pi.net_tx_bps, disk_read: pi.disk_read_bps, disk_write: pi.disk_write_bps, wifi: pi.wifi_dbm,
@@ -386,6 +394,23 @@ function card(pi, section) {
     row("power", "Input voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
   }
   if (pi.core_volts != null) row("power", "Core voltage", el("dd", "", `${pi.core_volts.toFixed(3)} V`));
+  if (pi.hashrate != null) {
+    const best = Math.max(pi.hashrate_max || 0, pi.hashrate);
+    const parts = [];
+    if (pi.hashrate_15m != null) parts.push(`15-min ${hashes(pi.hashrate_15m)}`);
+    if (pi.mining_threads != null) parts.push(`${pi.mining_threads} of ${cores || "?"} cores mining`);
+    const mining = meter(best ? pi.hashrate / best * 100 : null, "", hashes(pi.hashrate), `of ${hashes(best)} best 15-min`, "Best 15-minute average seen since the hub started tracking");
+    for (const part of parts) mining.appendChild(el("small", "detail", part));
+    if (pi.board_watts) mining.appendChild(el("small", "detail", `${(pi.hashrate / pi.board_watts).toFixed(1)} H/s per watt`));
+    if (pi.shares_total) {
+      const level = pi.shares_good / pi.shares_total < 0.98 ? "detail warn-text" : "detail";
+      mining.appendChild(el("small", level, `${pi.shares_good.toLocaleString()} of ${pi.shares_total.toLocaleString()} shares accepted`));
+    }
+    row("mining", "Mining", mining);
+    if (pi.pool) {
+      row("mining", "Pool", text({ level: "", text: pi.pool }, [pi.algo, pi.miner_version && `XMRig ${pi.miner_version}`].filter(Boolean).join(", ")));
+    }
+  }
   if (pi.board_watts != null) {
     row("watts", "Power use", text({ level: "", text: `${pi.board_watts.toFixed(1)} W` }, energy(pi.board_watts)));
   }
@@ -578,11 +603,25 @@ function section(group, pis, index) {
 }
 
 function showFleetPower() {
-  const powered = latestPis.filter((pi) => pi.health.online && pi.board_watts != null);
-  const total = powered.reduce((sum, pi) => sum + pi.board_watts, 0);
+  const online = latestPis.filter((pi) => pi.health.online);
+  const powered = online.filter((pi) => pi.board_watts != null);
+  const miners = online.filter((pi) => pi.hashrate != null);
   const line = document.getElementById("fleet-power");
-  line.hidden = !powered.length;
-  line.textContent = `Fleet power: ${total.toFixed(1)} W across ${powered.length} computer${powered.length === 1 ? "" : "s"}, ${energy(total)}. Measured by each board, not counting fans or USB devices.`;
+  const parts = [];
+  if (miners.length) {
+    const rate = miners.reduce((sum, pi) => sum + pi.hashrate, 0);
+    const measured = miners.filter((pi) => pi.board_watts);
+    const ratio = measured.length
+      ? `, ${(measured.reduce((s, pi) => s + pi.hashrate, 0) / measured.reduce((s, pi) => s + pi.board_watts, 0)).toFixed(1)} H/s per watt`
+      : "";
+    parts.push(`Fleet hashrate: ${hashes(rate)} from ${miners.length} miner${miners.length === 1 ? "" : "s"}${ratio}.`);
+  }
+  if (powered.length) {
+    const total = powered.reduce((sum, pi) => sum + pi.board_watts, 0);
+    parts.push(`Fleet power: ${total.toFixed(1)} W across ${powered.length} computer${powered.length === 1 ? "" : "s"}, ${energy(total)}. Measured by each board, not counting fans or USB devices.`);
+  }
+  line.hidden = !parts.length;
+  line.textContent = parts.join(" ");
 }
 
 function render() {

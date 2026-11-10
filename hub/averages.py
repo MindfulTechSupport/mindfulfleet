@@ -23,6 +23,7 @@ def readings(report):
         "disk_write": report.get("disk_write_bps"),
         "wifi": report.get("wifi_dbm"),
         "watts": report.get("board_watts"),
+        "hashrate": report.get("hashrate"),
     }
     throttled = report.get("throttled")
     if throttled is not None:

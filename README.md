@@ -39,6 +39,7 @@ To control updates on a computer:
 | `sudo mindful-fleet hold` | Stops automatic updates, so this computer stays on its current version |
 | `sudo mindful-fleet skip` | Skips the latest version, and takes the next one after it |
 | `sudo mindful-fleet resume` | Turns automatic updates back on and clears any skip |
+| `sudo mindful-fleet xmrig` | Turns on XMRig's read-only API so the card shows hashrate. See Mining |
 | `sudo mindful-fleet every 6h` | Checks for updates every 6 hours. Also `hourly`, `daily` (the default), or `weekly` |
 
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
@@ -52,6 +53,22 @@ Before running any script from the internet, you're welcome to read it first: it
 ## Arrange your dashboard
 
 Use the **Card width**, **Text size** and **Card height** sliders to fit your screen. With a set height, each card scrolls to show the rest. Use **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card width, text size and height are saved per browser, so a phone and a big screen can differ.
+
+## Mining
+
+If a computer runs the XMRig miner, its card can show hashrate, cores mining, shares accepted, and hashes per watt. XMRig shares these through its built-in web API, which is off by default. To turn it on, run this on each miner:
+
+```
+sudo mindful-fleet xmrig
+```
+
+It finds XMRig, shows exactly what it will change, and asks before changing anything. It turns the API on for that computer only (`127.0.0.1`, port 37841) in read-only mode, keeps a backup of XMRig's settings, and restarts the miner. Your wallet address isn't read or sent.
+
+To set it up by hand instead, add this to XMRig's `config.json` and restart it:
+
+```
+"http": { "enabled": true, "host": "127.0.0.1", "port": 37841, "access-token": null, "restricted": true }
+```
 
 ## What the colors mean
 

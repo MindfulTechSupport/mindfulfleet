@@ -6,6 +6,7 @@
 #   mindful-fleet skip           skip the latest version, and take the next one after it
 #   mindful-fleet resume         turn automatic updates back on and clear any skip
 #   mindful-fleet every hourly|6h|daily|weekly   how often to check for updates
+#   mindful-fleet xmrig          turn on XMRig's read-only API so the dashboard shows hashrate
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindful-fleet"
@@ -63,6 +64,11 @@ case "${1:-status}" in
     systemctl restart mindful-fleet-update.timer
     echo "This computer now checks for updates $2, give or take $SPREAD."
     ;;
+  xmrig)
+    need_root
+    shift
+    exec python3 /opt/mindful-fleet/xmrig-api.py "$@"
+    ;;
   update)
     need_root
     LATEST="$(latest)" || { echo "Couldn't check for updates." >&2; exit 1; }
@@ -79,7 +85,7 @@ case "${1:-status}" in
     curl -fsSL "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
     ;;
   *)
-    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly" >&2
+    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig" >&2
     exit 1
     ;;
 esac

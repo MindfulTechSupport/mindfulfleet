@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 (2026-11-10)
+
+- Mining: hashrate against the best 15-minute rate seen, the 15-minute rate, cores mining, shares accepted, pool, and hashes per watt, read from XMRig's built-in web API on each computer.
+- Fleet hashrate and hashes per watt under the headline, and hashrate in the averages table.
+- `sudo mindful-fleet xmrig` turns on XMRig's API for that computer only, in read-only mode. It shows the change first, asks, and keeps a backup.
+
 ## 0.2.3 (2026-11-10)
 
 - Power use in watts on Pi 5 boards, read from the board's power chip, with kWh a day and an optional cost per day.
