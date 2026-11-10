@@ -194,3 +194,32 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .cell-limit { color: var(--soft); font-size: .75em; overflow-wrap: anywhere; }
 .wide .issues { font-size: .92em; }
 @media (max-width: 520px) { .wide-who { flex-basis: 100%; } }
+
+/* Header: headline on the left, settings panel on the right. */
+.top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 40px; align-items: start; }
+.top-main { min-width: 0; }
+.settings { background: var(--card); border-radius: 16px; padding: .7em 1em .9em; min-width: 0; max-width: 100%; }
+.settings > summary { cursor: pointer; font-weight: 800; list-style: none; display: flex; align-items: center; gap: .5em; }
+.settings > summary::-webkit-details-marker { display: none; }
+.settings > summary::after { content: "▾"; color: var(--soft); }
+.settings:not([open]) > summary::after { content: "▸"; }
+.settings .tools { margin-top: .7em; display: flex; flex-direction: column; align-items: stretch; gap: .5em; }
+.settings .size { display: grid; grid-template-columns: 10em 2.2em minmax(7em, 1fr) 2.2em 4.4em; align-items: center; gap: .35em; font-weight: 600; }
+.settings .size input[type="range"] { width: 100%; min-width: 0; }
+.settings .size.pick { grid-template-columns: 10em minmax(0, 1fr); }
+.settings .size.pick select, .settings .size.pick input { width: 100%; font: inherit; }
+.settings .price input { width: 100%; }
+.settings button, .settings select, .settings input[type="text"], .settings .rows summary, .settings .price input { font-size: 1em; min-height: 2.25em; }
+.settings .step { min-width: 2.2em; min-height: 2.2em; font-size: 1.1em; padding: 0; }
+.tool-buttons { display: flex; flex-wrap: wrap; gap: .5em; margin-top: .2em; }
+.settings .row-list { right: 0; left: auto; }
+.settings .slider-value { text-align: right; }
+@media (max-width: 900px) {
+  .top { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .settings .size { grid-template-columns: 2.4em minmax(0, 1fr) 2.4em; }
+  .settings .size > span:first-child { grid-column: 1 / -1; }
+  .settings .slider-value { grid-column: 1 / -1; text-align: left; }
+  .settings .size.pick { grid-template-columns: minmax(0, 1fr); }
+}

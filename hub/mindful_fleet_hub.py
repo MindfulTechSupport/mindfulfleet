@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.7"
+VERSION = "0.2.8"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256

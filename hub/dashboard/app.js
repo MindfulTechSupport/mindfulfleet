@@ -32,7 +32,7 @@ let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { look: "tall", size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
+  const empty = { look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch (error) {
@@ -957,7 +957,16 @@ function setUpTools() {
     ["width", (v) => `${v}px`],
     ["size", (v) => `${v}%`],
     ["height", (v) => (v >= FULL_HEIGHT ? "Fit all" : `${v}px`)],
+    ["controls", (v) => `${v}%`],
   ];
+  const panel = document.getElementById("settings");
+  const scaleControls = () => { panel.style.fontSize = `${layout.controls}%`; };
+  scaleControls();
+  panel.open = layout.settingsOpen !== false;
+  panel.addEventListener("toggle", () => {
+    layout.settingsOpen = panel.open;
+    saveLayout();
+  });
   for (const [key, describe] of sliders) {
     const input = document.getElementById(key);
     const label = document.getElementById(`${key}-value`);
@@ -967,9 +976,10 @@ function setUpTools() {
       layout[key] = Number(input.value);
       label.textContent = describe(layout[key]);
       saveLayout();
-      render();
+      if (key === "controls") scaleControls();
+      else render();
     });
-    const name = input.parentElement.firstChild.textContent.trim().toLowerCase();
+    const name = input.parentElement.firstElementChild.textContent.trim().toLowerCase();
     input.before(stepButton(input, -1, `Make ${name} smaller`));
     input.after(stepButton(input, 1, `Make ${name} bigger`));
   }

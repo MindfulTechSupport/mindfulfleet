@@ -8,41 +8,52 @@
 </head>
 <body>
   <header class="top">
-    <p class="brand">Mindful Fleet</p>
-    <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
-    <p id="fleet-power" class="fleet-power" hidden></p>
-    <p id="connection" class="connection" role="status" hidden></p>
-    <div class="tools">
-      <label class="size">Look
-        <select id="look" aria-label="Card look"></select>
-      </label>
-      <label class="size">Card width
-        <input id="width" type="range" min="200" max="640" step="1" value="340">
-        <span id="width-value" class="slider-value"></span>
-      </label>
-      <label class="size">Text size
-        <input id="size" type="range" min="50" max="150" step="1" value="100">
-        <span id="size-value" class="slider-value"></span>
-      </label>
-      <label class="size">Card height
-        <input id="height" type="range" min="250" max="1250" step="1" value="1250">
-        <span id="height-value" class="slider-value"></span>
-      </label>
-      <details class="rows">
-        <summary>Choose what cards show</summary>
-        <div id="row-list" class="row-list"></div>
-      </details>
-      <label class="price">Electricity $ per kWh
-        <input id="price" type="number" min="0" max="10" step="0.001" inputmode="decimal" placeholder="0.152">
-      </label>
-      <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
-      <form id="new-group" class="new-group" hidden>
-        <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
-        <button type="submit">Add group</button>
-        <button id="reset" type="button">Reset layout</button>
-      </form>
+    <div class="top-main">
+      <p class="brand">Mindful Fleet</p>
+      <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
+      <p id="fleet-power" class="fleet-power" hidden></p>
+      <p id="connection" class="connection" role="status" hidden></p>
+      <p id="arrange-help" class="help" hidden>Drag cards to move them, or use the arrows and group menu on each card. Your layout is saved on the hub, so every browser sees it. Sizes stay per browser.</p>
     </div>
-    <p id="arrange-help" class="help" hidden>Drag cards to move them, or use the arrows and group menu on each card. Your layout is saved on the hub, so every browser sees it. Card size stays per browser.</p>
+    <details id="settings" class="settings" open>
+      <summary>Settings</summary>
+      <div class="tools">
+        <label class="size pick"><span>Look</span>
+          <select id="look" aria-label="Card look"></select>
+        </label>
+        <label class="size"><span>Card width</span>
+          <input id="width" type="range" min="200" max="640" step="1" value="340">
+          <span id="width-value" class="slider-value"></span>
+        </label>
+        <label class="size"><span>Text size</span>
+          <input id="size" type="range" min="50" max="150" step="1" value="100">
+          <span id="size-value" class="slider-value"></span>
+        </label>
+        <label class="size"><span>Card height</span>
+          <input id="height" type="range" min="250" max="1250" step="1" value="1250">
+          <span id="height-value" class="slider-value"></span>
+        </label>
+        <label class="size"><span>Controls size</span>
+          <input id="controls" type="range" min="60" max="150" step="1" value="100">
+          <span id="controls-value" class="slider-value"></span>
+        </label>
+        <label class="size pick price"><span>Electricity $ per kWh</span>
+          <input id="price" type="number" min="0" max="10" step="0.001" inputmode="decimal" placeholder="0.152">
+        </label>
+        <div class="tool-buttons">
+          <details class="rows">
+            <summary>Choose what cards show</summary>
+            <div id="row-list" class="row-list"></div>
+          </details>
+          <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
+        </div>
+        <form id="new-group" class="new-group" hidden>
+          <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
+          <button type="submit">Add group</button>
+          <button id="reset" type="button">Reset layout</button>
+        </form>
+      </div>
+    </details>
   </header>
   <main>
     <div id="empty" class="empty" hidden>

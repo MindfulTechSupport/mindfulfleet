@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8 (2026-11-10)
+
+- The header has two columns: the headline and fleet totals on the left, and a settings panel on the right that can be folded away.
+- A Controls size slider scales the settings panel by itself, separate from the cards.
+
 ## 0.2.7 (2026-11-10)
 
 - Three card looks, chosen per browser: Tall (the full card), Wide (one row per computer with the key numbers across, for big fleets), and Gauges (round dials with the number in the middle and the limit underneath).

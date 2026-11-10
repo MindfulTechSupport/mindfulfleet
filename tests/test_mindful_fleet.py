@@ -24,7 +24,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.7", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.8", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
