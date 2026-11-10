@@ -22,7 +22,11 @@ def readings(report):
         "disk_read": report.get("disk_read_bps"),
         "disk_write": report.get("disk_write_bps"),
         "wifi": report.get("wifi_dbm"),
+        "watts": report.get("board_watts"),
     }
+    throttled = report.get("throttled")
+    if throttled is not None:
+        values["slowed"] = 100.0 if throttled & 0b1110 else 0.0  # Percent of the time it was holding back.
     cores = report.get("cpu_per_core") or []
     if cores:
         values["cpu"] = sum(cores) / len(cores)

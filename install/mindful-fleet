@@ -5,11 +5,13 @@
 #   mindful-fleet hold           stop automatic updates on this computer
 #   mindful-fleet skip           skip the latest version, and take the next one after it
 #   mindful-fleet resume         turn automatic updates back on and clear any skip
+#   mindful-fleet every hourly|6h|daily|weekly   how often to check for updates
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindful-fleet"
 CHANNEL="${MINDFUL_FLEET_CHANNEL:-release}"
 CONF=/etc/mindful-fleet/update.conf
+DROPIN=/etc/systemd/system/mindful-fleet-update.timer.d/interval.conf
 
 installed() { cat /opt/mindful-fleet/VERSION 2>/dev/null || echo "unknown"; }
 latest() { curl -fsSL --max-time 20 "https://raw.githubusercontent.com/$REPO/$CHANNEL/VERSION" | tr -d '[:space:]'; }
@@ -19,7 +21,7 @@ need_root() { [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1
 save() {
   need_root
   install -d -m 755 /etc/mindful-fleet
-  printf 'AUTO_UPDATE=%s\nSKIP_VERSION=%s\n' "$1" "$2" > "$CONF"
+  printf 'AUTO_UPDATE=%s\nSKIP_VERSION=%s\nINTERVAL=%s\n' "$1" "$2" "${3:-$(setting INTERVAL | grep . || echo daily)}" > "$CONF"
 }
 
 case "${1:-status}" in
@@ -28,6 +30,7 @@ case "${1:-status}" in
     echo "Installed: $(installed)"
     echo "Latest:    $LATEST"
     echo "Automatic updates: $( [ "$(setting AUTO_UPDATE)" = off ] && echo "on hold" || echo "on")"
+    echo "Checks:    $(setting INTERVAL | grep . || echo daily)"
     SKIP="$(setting SKIP_VERSION)"
     [ -n "$SKIP" ] && echo "Skipping:  $SKIP"
     ;;
@@ -43,6 +46,22 @@ case "${1:-status}" in
     LATEST="$(latest)"
     save "$(setting AUTO_UPDATE | grep . || echo on)" "$LATEST"
     echo "Skipping $LATEST. This computer will update again when a newer version comes out."
+    ;;
+  every)
+    # A random delay spreads a fleet out, so they don't all restart at once.
+    case "${2:-}" in
+      hourly) WHEN=hourly; SPREAD=10min ;;
+      6h) WHEN="*-*-* 00/6:00:00"; SPREAD=1h ;;
+      daily) WHEN=daily; SPREAD=6h ;;
+      weekly) WHEN=weekly; SPREAD=12h ;;
+      *) echo "Usage: mindful-fleet every hourly | 6h | daily | weekly" >&2; exit 1 ;;
+    esac
+    save "$(setting AUTO_UPDATE | grep . || echo on)" "$(setting SKIP_VERSION)" "$2"
+    install -d -m 755 "$(dirname "$DROPIN")"
+    printf '[Timer]\nOnCalendar=\nOnCalendar=%s\nRandomizedDelaySec=%s\n' "$WHEN" "$SPREAD" > "$DROPIN"
+    systemctl daemon-reload
+    systemctl restart mindful-fleet-update.timer
+    echo "This computer now checks for updates $2, give or take $SPREAD."
     ;;
   update)
     need_root
@@ -60,7 +79,7 @@ case "${1:-status}" in
     curl -fsSL "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
     ;;
   *)
-    echo "Usage: mindful-fleet status | update | hold | skip | resume" >&2
+    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly" >&2
     exit 1
     ;;
 esac

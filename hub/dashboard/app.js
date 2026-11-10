@@ -11,15 +11,17 @@ const NOMINAL_VOLTS = 5;
 
 const ROWS = [
   ["trend", "Temperature trend"], ["fan", "Fan"], ["speed", "Speed"], ["power", "Power and voltage"],
-  ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
+  ["watts", "Power use"], ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
   ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["averages", "Averages"],
   ["uptime", "Running for"], ["system", "System"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
-const SHARED_KEYS = ["order", "groups", "members", "hidden"];
+const SHARED_KEYS = ["order", "groups", "members", "hidden", "price"];
 let latestVersion = null;
 let layoutSaveTimer = null;
+
+const FULL_HEIGHT = 1250; // The slider's top end means "fit all", with no scrolling.
 
 const layout = loadLayout();
 let arranging = false;
@@ -27,7 +29,7 @@ let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { size: 100, order: [], groups: [], members: {}, hidden: [] };
+  const empty = { size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch (error) {
@@ -165,6 +167,12 @@ function versionBelow(version, target) {
   return false;
 }
 
+function energy(watts) {
+  const kwhPerDay = watts * 24 / 1000;
+  const cost = layout.price ? `, $${(kwhPerDay * layout.price).toFixed(2)} a day` : "";
+  return `about ${kwhPerDay.toFixed(2)} kWh a day${cost}`;
+}
+
 function wifiWords(dbm) {
   if (dbm >= -55) return "Excellent";
   if (dbm >= -67) return "Good";
@@ -177,6 +185,8 @@ const AVERAGE_ROWS = [
   ["clock", "Clock GHz", (v) => (v / 1000).toFixed(2)],
   ["load", "Load", (v) => v.toFixed(2)],
   ["temp", "Temp °C", (v) => Math.round(v)],
+  ["slowed", "Slowed %", (v) => Math.round(v)],
+  ["watts", "Power W", (v) => v.toFixed(1)],
   ["fan", "Fan RPM", (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
   ["memory", "Memory %", (v) => Math.round(v)],
   ["volts", "Input V", (v) => v.toFixed(2)],
@@ -192,6 +202,7 @@ function averagesTable(pi) {
   if (!data || !data["5m"]) return null;
   const cores = pi.cpu_per_core.length;
   const now = {
+    watts: pi.board_watts, slowed: pi.throttled == null ? null : (pi.throttled & 0b1110 ? 100 : 0),
     cpu: pi.health.cpu.average, clock: average(pi.cpu_mhz), load: pi.load_avg[0], temp: pi.temp_c,
     fan: pi.fan_rpm, memory: pi.health.memory.percent, volts: pi.input_volts, net_in: pi.net_rx_bps,
     net_out: pi.net_tx_bps, disk_read: pi.disk_read_bps, disk_write: pi.disk_write_bps, wifi: pi.wifi_dbm,
@@ -306,6 +317,8 @@ function arrangeBar(pi, section) {
 function card(pi, section) {
   const h = pi.health;
   const article = el("article", `pi ${h.status}`);
+  article.dataset.id = pi.id;
+  if (layout.height < FULL_HEIGHT) article.style.maxHeight = `${layout.height}px`;
 
   if (arranging) {
     article.draggable = true;
@@ -373,6 +386,9 @@ function card(pi, section) {
     row("power", "Input voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
   }
   if (pi.core_volts != null) row("power", "Core voltage", el("dd", "", `${pi.core_volts.toFixed(3)} V`));
+  if (pi.board_watts != null) {
+    row("watts", "Power use", text({ level: "", text: `${pi.board_watts.toFixed(1)} W` }, energy(pi.board_watts)));
+  }
   if (cores) {
     row("cpu", "CPU", meter(h.cpu.average, "", `${Math.round(h.cpu.average)}%`, `${h.cpu.busy} of ${cores} cores in use`));
   }
@@ -542,7 +558,8 @@ function section(group, pis, index) {
   const wrap = el("section", "group");
   if (layout.groups.length) wrap.appendChild(groupHeader(group, pis, index));
   const grid = el("div", "fleet");
-  grid.style.zoom = layout.size / 100;
+  grid.style.fontSize = `${layout.size}%`;
+  grid.style.setProperty("--card-width", `${layout.width}px`);
   grid.replaceChildren(...pis.map((pi) => card(pi, pis)));
   if (arranging) {
     grid.classList.add("drop-zone");
@@ -560,7 +577,16 @@ function section(group, pis, index) {
   return wrap;
 }
 
+function showFleetPower() {
+  const powered = latestPis.filter((pi) => pi.health.online && pi.board_watts != null);
+  const total = powered.reduce((sum, pi) => sum + pi.board_watts, 0);
+  const line = document.getElementById("fleet-power");
+  line.hidden = !powered.length;
+  line.textContent = `Fleet power: ${total.toFixed(1)} W across ${powered.length} computer${powered.length === 1 ? "" : "s"}, ${energy(total)}. Measured by each board, not counting fans or USB devices.`;
+}
+
 function render() {
+  showFleetPower();
   const pis = sortedPis();
   const known = new Set(layout.groups.map((group) => group.id));
   const sections = [];
@@ -570,7 +596,16 @@ function render() {
   });
   const loose = pis.filter((pi) => !known.has(layout.members[pi.id]));
   if (loose.length || (arranging && layout.groups.length)) sections.push(section(null, loose, -1));
+  // Rebuilding the cards every few seconds would jump each one back to the top, so keep where people scrolled.
+  const scrolled = {};
+  for (const body of document.querySelectorAll(".pi[data-id] .pi-body")) {
+    if (body.scrollTop) scrolled[body.parentElement.dataset.id] = body.scrollTop;
+  }
   document.getElementById("fleet").replaceChildren(...sections);
+  for (const [id, top] of Object.entries(scrolled)) {
+    const body = document.querySelector(`.pi[data-id="${id}"] .pi-body`);
+    if (body) body.scrollTop = top;
+  }
 }
 
 function headline(pis) {
@@ -602,6 +637,7 @@ async function refresh() {
     connection.hidden = true;
     document.getElementById("empty").hidden = pis.length > 0;
     document.getElementById("summary").textContent = pis.length ? headline(pis) : "Your fleet is empty.";
+
     document.title = pis.some((pi) => pi.health.status !== "ok") ? "⚠ Mindful Fleet" : "Mindful Fleet";
     if (!busyEditing()) render();
   } catch (error) {
@@ -629,13 +665,31 @@ function setUpRowPicker() {
 
 function setUpTools() {
   setUpRowPicker();
-  const size = document.getElementById("size");
-  size.value = layout.size;
-  size.addEventListener("input", () => {
-    layout.size = Number(size.value);
-    saveLayout();
-    render();
+  const price = document.getElementById("price");
+  price.value = layout.price ?? "";
+  price.addEventListener("change", () => {
+    const value = Number(price.value);
+    layout.price = price.value === "" || !(value >= 0 && value <= 10) ? null : value;
+    price.value = layout.price ?? "";
+    commit();
   });
+  const sliders = [
+    ["width", (v) => `${v}px`],
+    ["size", (v) => `${v}%`],
+    ["height", (v) => (v >= FULL_HEIGHT ? "Fit all" : `${v}px`)],
+  ];
+  for (const [key, describe] of sliders) {
+    const input = document.getElementById(key);
+    const label = document.getElementById(`${key}-value`);
+    input.value = layout[key];
+    label.textContent = describe(layout[key]);
+    input.addEventListener("input", () => {
+      layout[key] = Number(input.value);
+      label.textContent = describe(layout[key]);
+      saveLayout();
+      render();
+    });
+  }
 
   const toggle = document.getElementById("arrange");
   toggle.addEventListener("click", () => {

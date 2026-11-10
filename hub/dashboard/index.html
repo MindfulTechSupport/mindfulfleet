@@ -10,15 +10,28 @@
   <header class="top">
     <p class="brand">Mindful Fleet</p>
     <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
+    <p id="fleet-power" class="fleet-power" hidden></p>
     <p id="connection" class="connection" role="status" hidden></p>
     <div class="tools">
-      <label class="size">Card size
-        <input id="size" type="range" min="50" max="130" step="5" value="100">
+      <label class="size">Card width
+        <input id="width" type="range" min="200" max="640" step="10" value="340">
+        <span id="width-value" class="slider-value"></span>
+      </label>
+      <label class="size">Text size
+        <input id="size" type="range" min="50" max="150" step="5" value="100">
+        <span id="size-value" class="slider-value"></span>
+      </label>
+      <label class="size">Card height
+        <input id="height" type="range" min="250" max="1250" step="50" value="1250">
+        <span id="height-value" class="slider-value"></span>
       </label>
       <details class="rows">
         <summary>Choose what cards show</summary>
         <div id="row-list" class="row-list"></div>
       </details>
+      <label class="price">Electricity $ per kWh
+        <input id="price" type="number" min="0" max="10" step="0.01" inputmode="decimal" placeholder="0.15">
+      </label>
       <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
       <form id="new-group" class="new-group" hidden>
         <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">

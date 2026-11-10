@@ -23,7 +23,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.2", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.3", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -210,6 +210,21 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(reporter.busiest_process(before, after, ticks_per_second=100), ("xmrig", 400.0))
         self.assertEqual(reporter.busiest_process(before, before), (None, None))
 
+    def test_power_from_pmic(self):
+        class Result:
+            returncode = 0
+            stdout = ("     VDD_CORE_A current(7)=2.00000000A\n"
+                      "     3V3_SYS_A current(1)=0.10000000A\n"
+                      "     VDD_CORE_V volt(15)=0.90000000V\n"
+                      "     3V3_SYS_V volt(9)=3.30000000V\n"
+                      "     EXT5V_V volt(24)=5.11000000V\n")
+        self.assertEqual(reporter.read_pmic(lambda *a, **k: Result()), (5.11, 2.13))
+
+        class Pi4:
+            returncode = 0
+            stdout = "error=2 error_msg=\"Invalid arguments\"\n"
+        self.assertEqual(reporter.read_pmic(lambda *a, **k: Pi4()), (None, None))
+
     def test_core_volts(self):
         class Result:
             returncode = 0
@@ -315,7 +330,7 @@ class HubTests(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/api/layout") as response:
             saved = json.load(response)
         self.assertEqual(saved, {"order": ["abcdef01"], "groups": [{"id": "gabc", "name": "Miners"}],
-                                 "members": {"abcdef01": "gabc"}, "hidden": ["swap"]})
+                                 "members": {"abcdef01": "gabc"}, "hidden": ["swap"], "price": None})
         self.assertEqual(put(layout, "text/plain"), 404)
         self.assertEqual(put([1]), 400)
 
@@ -374,6 +389,12 @@ class AverageTests(unittest.TestCase):
         history.add(2 * 86400, report(temp_c=30.0))
         copy = averages.History(json.loads(json.dumps(history.to_saved())))
         self.assertEqual(copy.averages(2 * 86400)["windows"]["24h"]["temp"], 30.0)
+
+    def test_time_slowed_down(self):
+        history = averages.History()
+        for minute, bits in enumerate((0x0, 0x4, 0x50000, 0x8)):  # Only "now" bits count.
+            history.add(minute * 60, report(throttled=bits))
+        self.assertEqual(history.averages(180)["windows"]["5m"]["slowed"], 50.0)
 
     def test_missing_readings_are_skipped(self):
         history = averages.History()

@@ -39,6 +39,7 @@ To control updates on a computer:
 | `sudo mindful-fleet hold` | Stops automatic updates, so this computer stays on its current version |
 | `sudo mindful-fleet skip` | Skips the latest version, and takes the next one after it |
 | `sudo mindful-fleet resume` | Turns automatic updates back on and clears any skip |
+| `sudo mindful-fleet every 6h` | Checks for updates every 6 hours. Also `hourly`, `daily` (the default), or `weekly` |
 
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
@@ -50,7 +51,7 @@ Before running any script from the internet, you're welcome to read it first: it
 
 ## Arrange your dashboard
 
-Use the **Card size** slider to fit your screen, and **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card size is saved per browser, so a phone and a big screen can differ.
+Use the **Card width**, **Text size** and **Card height** sliders to fit your screen. With a set height, each card scrolls to show the rest. Use **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card width, text size and height are saved per browser, so a phone and a big screen can differ.
 
 ## What the colors mean
 
@@ -72,6 +73,7 @@ CPU load never changes the color, because some computers, such as miners, are me
 - USB fans can't report their speed, so they show "Not reported".
 - A fan's "Fan effort" and the "Voltage" row only appear on boards that report them. Voltage needs a Pi 5.
 - Anyone who can open the dashboard can change its shared layout.
+- Power use is the board's own use as its power chip measures it, on Pi 5 boards only. It leaves out USB devices, fans on their own supply, and power-supply losses, so a wall meter reads higher.
 - Averages cover only the history the hub has. After a hub restart, it picks up from its last save, up to 5 minutes old.
 - Updates are held or skipped per computer, not from the dashboard yet.
 

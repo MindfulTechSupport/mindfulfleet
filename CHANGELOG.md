@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3 (2026-11-10)
+
+- Power use in watts on Pi 5 boards, read from the board's power chip, with kWh a day and an optional cost per day.
+- Fleet power total under the headline.
+- An electricity price setting, shared through the hub.
+- Averages of power use and of the share of time a computer spent slowed down.
+- `mindful-fleet every hourly|6h|daily|weekly` sets how often each computer checks for updates.
+- Separate card width, text size, and card height sliders. With a set height, each card scrolls, and keeps its place as numbers refresh.
+
 ## 0.2.2 (2026-11-10)
 
 - Averages over 5 minutes, 15 minutes, 30 minutes, 1 hour, and 24 hours for each core, CPU, clock speed, load, temperature, fan, memory, voltage, network, storage speed, and Wi-Fi. The hub keeps a day of history in about 350 small buckets per computer.

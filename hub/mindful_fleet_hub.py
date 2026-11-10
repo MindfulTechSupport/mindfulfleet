@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -103,6 +103,7 @@ def clean_report(raw):
         "fan_rpm": _number(raw.get("fan_rpm"), 0, 100000),
         "fan_percent": _number(raw.get("fan_percent"), 0, 100),
         "input_volts": _number(raw.get("input_volts"), 0, 60),
+        "board_watts": _number(raw.get("board_watts"), 0, 1000),
         "cpu_per_core": [_number(c, 0, 100) for c in cores],
         "mem_total": _number(raw.get("mem_total"), 0, terabytes),
         "mem_used": _number(raw.get("mem_used"), 0, terabytes),
@@ -274,7 +275,9 @@ def clean_layout(raw):
     members = {k: v for k, v in members.items() if isinstance(k, str) and _ID_RE.match(k) and v in known} \
         if isinstance(members, dict) else {}
     hidden = [h for h in raw.get("hidden", []) if isinstance(h, str) and re.match(r"^[a-z]{1,20}$", h)][:40]
-    return {"order": ids, "groups": groups, "members": members, "hidden": hidden}
+    price = raw.get("price")
+    price = price if isinstance(price, (int, float)) and not isinstance(price, bool) and 0 <= price <= 10 else None
+    return {"order": ids, "groups": groups, "members": members, "hidden": hidden, "price": price}
 
 
 def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
@@ -389,12 +392,13 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "hostname": name,
         "ip": f"192.168.1.{10 + sum(map(ord, name)) % 200}",
         "model": "Raspberry Pi 5 Model B Rev 1.0",
-        "reporter_version": "0.2.1" if name == "media-pi" else VERSION,
+        "reporter_version": "0.2.2" if name == "media-pi" else VERSION,
         "temp_c": round(temp + random.uniform(-0.6, 0.6), 1),
         "throttled": throttled,
         "fan_rpm": fan if fan is not None else 2400 + random.randint(-80, 80),
         "fan_percent": None if fan == 0 else 45,
         "input_volts": round(5.08 + random.uniform(-0.02, 0.02), 2),
+        "board_watts": round((3.2 + sum(cpu or [20] * 4) / 400 * 5.4) * random.uniform(0.97, 1.03), 2),
         "cpu_per_core": cpu or [round(random.uniform(8, 30), 1) for _ in range(4)],
         "mem_total": (4 if name in ("pi-hole", "old-shed-pi") else 8) * gib * 98 // 100,
         "mem_used": (4 if name in ("pi-hole", "old-shed-pi") else 8) * gib * mem // 100,

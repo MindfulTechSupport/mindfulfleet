@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 DEFAULT_INTERVAL = 15
 
 
@@ -73,16 +73,30 @@ def read_fan_percent(root="/"):
     return None
 
 
+def read_pmic(run=subprocess.run):
+    """Input voltage and estimated board power from a Pi 5's power chip.
+
+    The chip reports voltage and current for each supply rail on the board. Their products add up
+    to what the board itself uses, not counting USB devices or fans powered elsewhere.
+    """
+    try:
+        result = run(["vcgencmd", "pmic_read_adc"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return None, None
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    amps, volts = {}, {}
+    for rail, kind, value in re.findall(r"(\S+)_([AV])\s+(?:current|volt)\(\d+\)=([\d.]+)[AV]", result.stdout):
+        (amps if kind == "A" else volts)[rail] = float(value)
+    input_volts = round(volts["EXT5V"], 2) if "EXT5V" in volts else None
+    shared = amps.keys() & volts.keys()
+    watts = round(sum(amps[rail] * volts[rail] for rail in shared), 2) if shared else None
+    return input_volts, watts
+
+
 def read_input_volts(run=subprocess.run):
     """Voltage arriving at the board. Only a Pi 5's power chip reports this."""
-    try:
-        result = run(["vcgencmd", "pmic_read_adc", "EXT5V_V"], capture_output=True, text=True, timeout=5)
-        if result.returncode != 0:
-            return None
-        match = re.search(r"EXT5V_V\s+volt\(\d+\)=([\d.]+)V", result.stdout)
-        return round(float(match.group(1)), 2) if match else None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+    return read_pmic(run)[0]
 
 
 def read_cpu_mhz(root="/"):
@@ -329,6 +343,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
     mem_total, mem_used = read_memory(root)
     swap_total, swap_used = read_swap(root)
     mhz_now, mhz_max = read_cpu_mhz(root)
+    input_volts, board_watts = read_pmic(run)
     net_in, net_out = net_rates(net_before, net_after)
     disk_in, disk_out = net_rates(disk_before, disk_after)  # Same arithmetic: bytes per second between samples.
     top_name, top_cpu = busiest_process(procs_before, procs_after)
@@ -343,7 +358,8 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "throttled": read_throttled(run),
         "fan_rpm": read_fan_rpm(root),
         "fan_percent": read_fan_percent(root),
-        "input_volts": read_input_volts(run),
+        "input_volts": input_volts,
+        "board_watts": board_watts,
         "cpu_per_core": cpu_percent(cpu_before, cpu_after),
         "mem_total": mem_total,
         "mem_used": mem_used,
