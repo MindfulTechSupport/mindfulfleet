@@ -96,18 +96,20 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .issues li.warn { color: var(--warn); }
 .issues li.offline { color: var(--off); }
 
-.facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; }
+/* minmax(0, …) lets long values like pool names wrap instead of pushing the card wider. */
+.facts { margin: 0; display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 6px 14px; align-items: center; }
 .facts dt { color: var(--soft); }
-.facts dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facts dd { min-width: 0; overflow-wrap: anywhere; margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .facts dd.warn { color: var(--warn); }
 .facts dd.bad { color: var(--bad); }
 .meter { display: block; }
-.meter-line { display: flex; align-items: center; gap: 10px; }
+.meter-line { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 2px 10px; min-width: 0; }
+.meter-line .bar { flex: 1 1 40px; min-width: 40px; }
 .bar { flex: 1; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
 .fill { height: 100%; border-radius: 5px; background: var(--neutral); }
 .fill.warn { background: var(--warn-body); }
 .fill.bad { background: var(--bad); }
-.meter-line span { min-width: 4.4em; text-align: right; }
+.meter-line span { flex: 0 0 auto; min-width: 4.4em; text-align: right; white-space: nowrap; }
 .detail { display: block; color: var(--soft); font-size: .8em; font-weight: 500; text-align: right; margin-top: 2px; }
 .pi-board { margin: 2px 0 0; font-weight: 700; font-size: .9em; }
 .rows { position: relative; }
@@ -116,7 +118,10 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .row-list { position: absolute; z-index: 5; margin-top: 6px; background: var(--card); border: 1.5px solid var(--track); border-radius: 12px; padding: 10px 14px; display: grid; grid-template-columns: repeat(2, max-content); gap: 6px 18px; box-shadow: 0 8px 24px rgba(20, 22, 50, .25); }
 .row-choice { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .row-choice input { accent-color: var(--neutral); width: 18px; height: 18px; }
-.cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 8px; }
+.cores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.pi-body { container-type: inline-size; }
+/* Narrow cards show the cores 2 by 2 rather than 3 and 1. */
+@container (max-width: 260px) { .cores { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .core { display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
 .core strong { font-size: .95em; }
 .core small { color: var(--soft); font-size: .75em; white-space: nowrap; }
