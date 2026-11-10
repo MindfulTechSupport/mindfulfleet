@@ -10,8 +10,9 @@ case "$PORT" in ''|*[!0-9]*) echo "Port must be a number." >&2; exit 1 ;; esac
 id mindful-fleet >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin mindful-fleet
 
 install -d -m 755 /opt/mindful-fleet/hub/dashboard
-install -m 644 "$SOURCE"/hub/health.py /opt/mindful-fleet/hub/
-install -m 755 "$SOURCE"/hub/mindful_fleet_hub.py /opt/mindful-fleet/hub/
+# Every module the hub needs, so a new one can't be left behind.
+install -m 644 "$SOURCE"/hub/*.py /opt/mindful-fleet/hub/
+chmod 755 /opt/mindful-fleet/hub/mindful_fleet_hub.py
 install -m 644 "$SOURCE"/hub/dashboard/* /opt/mindful-fleet/hub/dashboard/
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet

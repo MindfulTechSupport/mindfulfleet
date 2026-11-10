@@ -1,4 +1,5 @@
 import json
+import subprocess
 import os
 import sys
 import tempfile
@@ -23,7 +24,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.4", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.5", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -418,6 +419,19 @@ class XmrigTests(unittest.TestCase):
         pi = fleet.snapshot()["pis"][0]
         self.assertEqual((pi["hashrate"], pi["hashrate_max"], pi["averages"]["windows"]["5m"]["hashrate"]),
                          (1100.0, 1250.0, 1183.33))
+
+
+class InstallerTests(unittest.TestCase):
+    def test_hub_installer_copies_every_module_the_hub_imports(self):
+        script = (ROOT / "install" / "install-hub.sh").read_text()
+        self.assertIn('"$SOURCE"/hub/*.py', script)
+        installed = Path(tempfile.mkdtemp())
+        for module in (ROOT / "hub").glob("*.py"):
+            (installed / module.name).write_bytes(module.read_bytes())
+        # Started the way the service starts it, from the installed folder alone.
+        result = subprocess.run([sys.executable, "-I", str(installed / "mindful_fleet_hub.py"), "--version"],
+                                cwd="/", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class XmrigSetupTests(unittest.TestCase):

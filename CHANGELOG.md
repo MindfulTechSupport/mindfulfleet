@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5 (2026-11-10)
+
+- Fixed: the dashboard installer left out a file added in 0.2.2, so an updated dashboard couldn't start. A test now checks that every file the dashboard needs gets installed.
+
 ## 0.2.4 (2026-11-10)
 
 - Mining: hashrate against the best 15-minute rate seen, the 15-minute rate, cores mining, shares accepted, pool, and hashes per watt, read from XMRig's built-in web API on each computer.
