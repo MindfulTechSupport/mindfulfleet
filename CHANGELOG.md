@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 (2026-11-10)
+
+- Electricity price takes three decimal places, and small daily costs show to a tenth of a cent.
+- The Pool row says whether the link to the pool is encrypted, shows the rig ID, and warns when two computers share a rig ID, since the pool can't tell them apart.
+
 ## 0.2.5 (2026-11-10)
 
 - Fixed: the dashboard installer left out a file added in 0.2.2, so an updated dashboard couldn't start. A test now checks that every file the dashboard needs gets installed.

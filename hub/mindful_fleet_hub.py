@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -131,6 +131,8 @@ def clean_report(raw):
         "shares_good": _number(raw.get("shares_good"), 0, 1e15),
         "shares_total": _number(raw.get("shares_total"), 0, 1e15),
         "pool": _text(raw.get("pool"), 80),
+        "pool_tls": _text(raw.get("pool_tls"), 20),
+        "rig_id": _text(raw.get("rig_id"), 40),
         "algo": _text(raw.get("algo"), 30),
         "miner_version": _text(raw.get("miner_version"), 20),
         "kernel": _text(raw.get("kernel"), 40),
@@ -434,7 +436,7 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "disk_write_bps": random.randint(2000, 30000),
         **({"hashrate": round(sum(cpu) * 3.1 * random.uniform(0.97, 1.03), 1),
             "hashrate_15m": round(sum(cpu) * 3.1, 1), "mining_threads": sum(1 for c in cpu if c > 50),
-            "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:10128", "algo": "rx/0",
+            "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:20004", "pool_tls": "TLSv1.3", "rig_id": "rig01", "algo": "rx/0",
             "miner_version": "6.24.0"} if cpu and sum(cpu) > 250 else {}),
         "top_process": "xmrig" if sum(cpu or [0]) > 250 else "python3",
         "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),

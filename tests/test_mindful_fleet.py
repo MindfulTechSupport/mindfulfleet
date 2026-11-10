@@ -24,7 +24,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.5", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.6", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -398,17 +398,22 @@ class XmrigTests(unittest.TestCase):
     def test_reads_summary_and_threads(self):
         url = self.serve({
             "/2/summary": {"hashrate": {"total": [1210.5, 1198.2, 1201.0]}, "results": {"shares_good": 99, "shares_total": 100},
-                           "connection": {"pool": "pool.example.com:10128"}, "algo": "rx/0", "version": "6.24.0"},
+                           "connection": {"pool": "pool.example.com:10128", "tls": "TLSv1.3"}, "algo": "rx/0",
+                           "version": "6.24.0", "worker_id": "rig01"},
             "/2/backends": [{"type": "cpu", "enabled": True, "threads": [{}, {}, {}]}, {"type": "opencl", "enabled": False}],
         }, token="secret")
         found = reporter.read_xmrig(url, "secret")
         self.assertEqual((found["hashrate"], found["hashrate_15m"], found["mining_threads"]), (1198.2, 1201.0, 3))
         self.assertEqual((found["shares_good"], found["shares_total"], found["pool"]), (99, 100, "pool.example.com:10128"))
+        self.assertEqual((found["pool_tls"], found["rig_id"]), ("TLSv1.3", "rig01"))
         self.assertEqual(reporter.read_xmrig(url, "wrong"), {})
 
     def test_just_started_miner_and_no_miner(self):
-        url = self.serve({"/2/summary": {"hashrate": {"total": [None, None, None]}}})
-        self.assertIsNone(reporter.read_xmrig(url)["hashrate"])
+        url = self.serve({"/2/summary": {"hashrate": {"total": [None, None, None]},
+                                         "connection": {"pool": "pool.example.com:10004", "tls": None}}})
+        found = reporter.read_xmrig(url)
+        self.assertIsNone(found["hashrate"])
+        self.assertEqual(found["pool_tls"], "none")
         self.assertEqual(reporter.read_xmrig("http://127.0.0.1:9"), {})
         self.assertEqual(reporter.read_xmrig("off"), {})
 

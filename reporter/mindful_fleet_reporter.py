@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
 
@@ -249,6 +249,9 @@ def read_xmrig(url, token=None, timeout=2):
         "shares_good": results.get("shares_good"),
         "shares_total": results.get("shares_total"),
         "pool": connection.get("pool"),
+        # XMRig reports the TLS version when the pool link is encrypted, and nothing when it isn't.
+        "pool_tls": (connection.get("tls") or "none") if connection.get("pool") else None,
+        "rig_id": summary.get("worker_id"),
         "algo": summary.get("algo"),
         "miner_version": summary.get("version"),
     }

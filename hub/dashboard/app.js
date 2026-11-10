@@ -176,7 +176,8 @@ function hashes(value) {
 
 function energy(watts) {
   const kwhPerDay = watts * 24 / 1000;
-  const cost = layout.price ? `, $${(kwhPerDay * layout.price).toFixed(2)} a day` : "";
+  const perDay = kwhPerDay * (layout.price || 0);
+  const cost = layout.price ? `, $${perDay.toFixed(perDay < 1 ? 3 : 2)} a day` : "";
   return `about ${kwhPerDay.toFixed(2)} kWh a day${cost}`;
 }
 
@@ -408,7 +409,20 @@ function card(pi, section) {
     }
     row("mining", "Mining", mining);
     if (pi.pool) {
-      row("mining", "Pool", text({ level: "", text: pi.pool }, [pi.algo, pi.miner_version && `XMRig ${pi.miner_version}`].filter(Boolean).join(", ")));
+      const pool = text({ level: "", text: pi.pool }, [pi.algo, pi.miner_version && `XMRig ${pi.miner_version}`].filter(Boolean).join(", "));
+      if (pi.pool_tls) {
+        const secure = pi.pool_tls !== "none" || pi.pool.endsWith(".onion") || /\.onion:/.test(pi.pool);
+        pool.appendChild(el("small", secure ? "detail" : "detail warn-text",
+          pi.pool_tls !== "none" ? `Encrypted (${pi.pool_tls})` : secure ? "Through Tor" : "Not encrypted"));
+      }
+      if (pi.rig_id) {
+        pool.appendChild(el("small", "detail", `Rig ID ${pi.rig_id}`));
+        const twins = latestPis.filter((other) => other.id !== pi.id && other.rig_id === pi.rig_id && other.health.online);
+        if (twins.length) {
+          pool.appendChild(el("small", "detail warn-text", `Same rig ID as ${twins.map((t) => t.hostname).join(", ")}, so the pool can't tell them apart`));
+        }
+      }
+      row("mining", "Pool", pool);
     }
   }
   if (pi.board_watts != null) {
