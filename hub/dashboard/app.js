@@ -21,6 +21,9 @@ const SHARED_KEYS = ["order", "groups", "members", "hidden", "price"];
 let latestVersion = null;
 let layoutSaveTimer = null;
 
+const LOOKS = [["tall", "Tall"], ["wide", "Wide"], ["gauges", "Gauges"]];
+const POWER_SCALE_WATTS = 12; // About the most a busy Pi 5 board draws, so the dial has room.
+const expanded = new Set(); // Cards with "All readings" open, in this browser only.
 const FULL_HEIGHT = 1250; // The slider's top end means "fit all", with no scrolling.
 
 const layout = loadLayout();
@@ -29,7 +32,7 @@ let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
+  const empty = { look: "tall", size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch (error) {
@@ -323,12 +326,9 @@ function arrangeBar(pi, section) {
   return bar;
 }
 
-function card(pi, section) {
-  const h = pi.health;
-  const article = el("article", `pi ${h.status}`);
+function cardShell(pi, extraClass = "") {
+  const article = el("article", `pi ${pi.health.status} ${extraClass}`.trim());
   article.dataset.id = pi.id;
-  if (layout.height < FULL_HEIGHT) article.style.maxHeight = `${layout.height}px`;
-
   if (arranging) {
     article.draggable = true;
     article.classList.add("movable");
@@ -351,7 +351,11 @@ function card(pi, section) {
       if (moving && moving !== pi.id) placeBefore(moving, pi.id);
     });
   }
+  return article;
+}
 
+function cardHead(pi) {
+  const h = pi.health;
   const head = el("div", "pi-head");
   const title = el("div", "pi-title");
   title.append(el("h2", "", pi.hostname), el("p", "pi-mood", MOODS[h.status]));
@@ -359,22 +363,19 @@ function card(pi, section) {
   if (board) title.appendChild(el("p", "pi-board", board));
   if (pi.ip) title.appendChild(el("p", "pi-where", pi.ip));
   head.append(mascot(h.status), title);
+  return head;
+}
 
-  const body = el("div", h.online ? "pi-body" : "pi-body stale");
-  if (arranging) body.appendChild(arrangeBar(pi, section));
-  const heat = el("div", "heat");
-  const temp = h.temp.value == null ? "—" : `${Math.round(h.temp.value)}°C`;
-  heat.append(el("div", `degrees ${h.temp.level}`, temp));
-  if (shown("trend")) heat.appendChild(sparkline(pi.history));
-  body.appendChild(heat);
-  if (!h.online) body.appendChild(el("p", "heat-note", "Last known numbers"));
+function issuesList(pi) {
+  if (!pi.health.issues.length) return null;
+  const list = el("ul", "issues");
+  for (const issue of pi.health.issues) list.appendChild(el("li", issue.level, issue.text));
+  return list;
+}
 
-  if (h.issues.length) {
-    const list = el("ul", "issues");
-    for (const issue of h.issues) list.appendChild(el("li", issue.level, issue.text));
-    body.appendChild(list);
-  }
-
+/* Every reading as label and value rows, then the cores and the averages table. */
+function readings(pi) {
+  const h = pi.health;
   const facts = el("dl", "facts");
   const row = (key, label, value) => {
     if (shown(key)) facts.append(el("dt", "", label), value);
@@ -467,15 +468,191 @@ function card(pi, section) {
     }
     row("system", "System", system);
   }
-  body.appendChild(facts);
-  if (pi.cpu_per_core.length && shown("cores")) body.appendChild(coreGrid(pi));
+  const parts = [facts];
+  if (pi.cpu_per_core.length && shown("cores")) parts.push(coreGrid(pi));
   if (shown("averages")) {
     const table = averagesTable(pi);
-    if (table) body.appendChild(table);
+    if (table) parts.push(table);
+  }
+  return parts;
+
+}
+
+function detailsToggle(pi, container) {
+  const open = expanded.has(pi.id);
+  const button = el("button", "details-toggle", open ? "Hide readings" : "All readings");
+  button.type = "button";
+  button.setAttribute("aria-expanded", String(open));
+  button.addEventListener("click", () => {
+    if (expanded.has(pi.id)) expanded.delete(pi.id);
+    else expanded.add(pi.id);
+    render();
+  });
+  container.appendChild(button);
+  if (open) {
+    const more = el("div", "more");
+    more.append(...readings(pi));
+    container.appendChild(more);
+  }
+}
+
+function tallCard(pi, section) {
+  const h = pi.health;
+  const article = cardShell(pi);
+  if (layout.height < FULL_HEIGHT) article.style.maxHeight = `${layout.height}px`;
+  const body = el("div", h.online ? "pi-body" : "pi-body stale");
+  if (arranging) body.appendChild(arrangeBar(pi, section));
+  const heat = el("div", "heat");
+  const temp = h.temp.value == null ? "—" : `${Math.round(h.temp.value)}°C`;
+  heat.append(el("div", `degrees ${h.temp.level}`, temp));
+  if (shown("trend")) heat.appendChild(sparkline(pi.history));
+  body.appendChild(heat);
+  if (!h.online) body.appendChild(el("p", "heat-note", "Last known numbers"));
+  const issues = issuesList(pi);
+  if (issues) body.appendChild(issues);
+  body.append(...readings(pi));
+  article.append(cardHead(pi), body);
+  return article;
+}
+
+/* A round dial: the arc fills from left to right like a car gauge, with the number in the middle. */
+function gauge({ label, value, unit, percent, level = "", limit }) {
+  const wrap = el("figure", `gauge ${level}`.trim());
+  const root = svg("svg", { viewBox: "0 0 100 86", role: "img", "aria-label": `${label}: ${value}${unit ? ` ${unit}` : ""}${limit ? `, ${limit}` : ""}` });
+  const arc = "M 18 78 A 40 40 0 1 1 82 78";
+  // Readings with no upper limit, like hashes per watt, show just the number.
+  if (percent != null) svg("path", { d: arc, class: "gauge-track", pathLength: 100 }, root);
+  const filled = Math.max(0, Math.min(100, percent ?? 0));
+  if (percent != null && filled > 0) svg("path", { d: arc, class: "gauge-fill", pathLength: 100, "stroke-dasharray": `${filled} 100` }, root);
+  const number = svg("text", { x: 50, y: 52, class: "gauge-value", "text-anchor": "middle" }, root);
+  number.textContent = value;
+  if (unit) {
+    const units = svg("text", { x: 50, y: 66, class: "gauge-unit", "text-anchor": "middle" }, root);
+    units.textContent = unit;
+  }
+  wrap.appendChild(root);
+  wrap.appendChild(el("figcaption", "", label));
+  if (limit) wrap.appendChild(el("small", "gauge-limit", limit));
+  return wrap;
+}
+
+function compactHashes(value) {
+  if (value >= 1e6) return [(value / 1e6).toFixed(2), "MH/s"];
+  if (value >= 1e4) return [(value / 1e3).toFixed(1), "kH/s"];
+  return [Math.round(value).toLocaleString(), "H/s"];
+}
+
+/* The headline readings, shared by the Gauges and Wide looks. Each has a value, a fill and its limit. */
+function keyReadings(pi) {
+  const h = pi.health;
+  const list = [];
+  const add = (key, item) => { if (shown(key)) list.push(item); };
+  if (h.temp.value != null) {
+    add("trend", { key: "temp", label: "Temperature", value: Math.round(h.temp.value), unit: "°C", percent: h.temp.value / 90 * 100, level: h.temp.level, limit: "warm at 70, hot at 80" });
+  }
+  if (pi.hashrate != null) {
+    const best = Math.max(pi.hashrate_max || 0, pi.hashrate);
+    const [value, unit] = compactHashes(pi.hashrate);
+    add("mining", { key: "hashrate", label: "Hashrate", value, unit, percent: best ? pi.hashrate / best * 100 : 0, limit: `best ${hashes(best)}` });
+    if (pi.board_watts) {
+      add("mining", { key: "hpw", label: "Per watt", value: (pi.hashrate / pi.board_watts).toFixed(1), unit: "H/s/W", percent: null, limit: pi.mining_threads != null ? `${pi.mining_threads} of ${h.cpu.total} cores mining` : "" });
+    }
+  }
+  if (pi.board_watts != null) {
+    add("watts", { key: "watts", label: "Power use", value: pi.board_watts.toFixed(1), unit: "W", percent: pi.board_watts / POWER_SCALE_WATTS * 100, limit: `of ${POWER_SCALE_WATTS} W scale` });
+  }
+  if (h.cpu.total) {
+    add("cpu", { key: "cpu", label: "CPU", value: Math.round(h.cpu.average), unit: "%", percent: h.cpu.average, limit: `${h.cpu.busy} of ${h.cpu.total} cores in use` });
+  }
+  const mhz = average(pi.cpu_mhz);
+  if (mhz != null && pi.cpu_max_mhz) {
+    add("clock", { key: "clock", label: "Clock", value: (mhz / 1000).toFixed(2), unit: "GHz", percent: mhz / pi.cpu_max_mhz * 100, limit: `of ${ghz(pi.cpu_max_mhz)}` });
+  }
+  if (pi.fan_rpm != null && (pi.fan_rpm > 0 || pi.fan_max_rpm)) {
+    const percent = h.fan.percent ?? (pi.fan_max_rpm ? pi.fan_rpm / pi.fan_max_rpm * 100 : 0);
+    add("fan", { key: "fan", label: "Fan", value: pi.fan_rpm >= 1000 ? (pi.fan_rpm / 1000).toFixed(1) : pi.fan_rpm, unit: pi.fan_rpm >= 1000 ? "k RPM" : "RPM", percent, level: h.fan.level, limit: h.fan.percent != null ? `${h.fan.percent}% effort` : h.fan.text });
+  }
+  if (h.memory.percent != null) {
+    add("memory", { key: "memory", label: "Memory", value: Math.round(h.memory.percent), unit: "%", percent: h.memory.percent, level: h.memory.level, limit: `of ${bytes(pi.mem_total)}` });
+  }
+  if (h.disk.percent != null) {
+    add("storage", { key: "storage", label: "Storage", value: Math.round(h.disk.percent), unit: "%", percent: h.disk.percent, level: h.disk.level, limit: `of ${bytes(pi.disk_total)}` });
+  }
+  if (h.power.volts != null) {
+    add("power", { key: "volts", label: "Input", value: h.power.volts.toFixed(2), unit: "V", percent: (h.power.volts - LOW_VOLTS) / (HIGH_VOLTS - LOW_VOLTS) * 100, level: h.power.level, limit: h.power.text });
+  }
+  return list;
+}
+
+function gaugeCard(pi, section) {
+  const h = pi.health;
+  const article = cardShell(pi, "gauges-card");
+  if (layout.height < FULL_HEIGHT) article.style.maxHeight = `${layout.height}px`;
+  const body = el("div", h.online ? "pi-body" : "pi-body stale");
+  if (arranging) body.appendChild(arrangeBar(pi, section));
+  if (!h.online) body.appendChild(el("p", "heat-note", "Last known numbers"));
+  const issues = issuesList(pi);
+  if (issues) body.appendChild(issues);
+  const dials = el("div", "gauges");
+  for (const item of keyReadings(pi)) dials.appendChild(gauge(item));
+  body.appendChild(dials);
+  detailsToggle(pi, body);
+  article.append(cardHead(pi), body);
+  return article;
+}
+
+function wideRow(pi, section) {
+  const h = pi.health;
+  const article = cardShell(pi, "wide");
+  const who = el("div", "wide-who");
+  who.appendChild(mascot(h.status));
+  const title = el("div", "pi-title");
+  title.append(el("h2", "", pi.hostname), el("p", "pi-mood", MOODS[h.status]));
+  const board = [shortModel(pi.model), boardMemory(pi)].filter(Boolean).join(", ");
+  if (board) title.appendChild(el("p", "pi-board", board));
+  if (pi.ip) title.appendChild(el("p", "pi-where", pi.ip));
+  who.appendChild(title);
+
+  const cells = el("div", "wide-cells");
+  for (const item of keyReadings(pi)) {
+    const cell = el("div", `cell ${item.level || ""}`.trim());
+    cell.appendChild(el("span", "cell-label", item.label));
+    const value = el("strong", "", `${item.value}`);
+    if (item.unit) value.appendChild(el("small", "", item.unit === "%" || item.unit === "°C" ? item.unit : ` ${item.unit}`));
+    cell.appendChild(value);
+    if (item.percent != null) {
+      const bar = el("div", "bar");
+      const fill = el("div", `fill ${item.level || ""}`);
+      fill.style.width = `${Math.max(0, Math.min(100, item.percent))}%`;
+      bar.appendChild(fill);
+      cell.appendChild(bar);
+    }
+    if (item.limit) cell.appendChild(el("small", "cell-limit", item.limit));
+    cells.appendChild(cell);
+  }
+  if (shown("uptime")) {
+    const up = el("div", "cell cell-text");
+    up.append(el("span", "cell-label", "Running for"), el("strong", "", duration(pi.uptime_s)));
+    cells.appendChild(up);
   }
 
-  article.append(head, body);
+  const body = el("div", h.online ? "wide-body" : "wide-body stale");
+  if (arranging) body.appendChild(arrangeBar(pi, section));
+  const top = el("div", "wide-top");
+  top.append(who, cells);
+  body.appendChild(top);
+  const issues = issuesList(pi);
+  if (issues) body.appendChild(issues);
+  if (!h.online) body.appendChild(el("p", "heat-note", "Last known numbers"));
+  detailsToggle(pi, body);
+  article.appendChild(body);
   return article;
+}
+
+function card(pi, section) {
+  if (layout.look === "wide") return wideRow(pi, section);
+  if (layout.look === "gauges") return gaugeCard(pi, section);
+  return tallCard(pi, section);
 }
 
 /* Layout changes */
@@ -598,6 +775,7 @@ function section(group, pis, index) {
   if (layout.groups.length) wrap.appendChild(groupHeader(group, pis, index));
   const grid = el("div", "fleet");
   grid.style.fontSize = `${layout.size}%`;
+  if (layout.look === "wide") grid.classList.add("rows");
   grid.style.setProperty("--card-width", `${layout.width}px`);
   grid.replaceChildren(...pis.map((pi) => card(pi, pis)));
   if (arranging) {
@@ -755,6 +933,18 @@ function setUpRowPicker() {
 
 function setUpTools() {
   setUpRowPicker();
+  const look = document.getElementById("look");
+  for (const [value, label] of LOOKS) {
+    const option = el("option", "", label);
+    option.value = value;
+    look.appendChild(option);
+  }
+  look.value = LOOKS.some(([value]) => value === layout.look) ? layout.look : "tall";
+  look.addEventListener("change", () => {
+    layout.look = look.value;
+    saveLayout();
+    render();
+  });
   const price = document.getElementById("price");
   price.value = layout.price ?? "";
   price.addEventListener("change", () => {

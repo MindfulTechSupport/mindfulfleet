@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.7 (2026-11-10)
+
+- Three card looks, chosen per browser: Tall (the full card), Wide (one row per computer with the key numbers across, for big fleets), and Gauges (round dials with the number in the middle and the limit underneath).
+- Wide and Gauges cards have an "All readings" button that opens the full list.
+
 ## 0.2.6 (2026-11-10)
 
 - Electricity price takes three decimal places, and small daily costs show to a tenth of a cent.

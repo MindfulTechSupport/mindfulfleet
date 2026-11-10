@@ -150,3 +150,47 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
   .row-list { left: 16px; right: 16px; grid-template-columns: 1fr 1fr; }
   .row-choice { white-space: normal; }
 }
+
+/* Gauges look */
+.gauges { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.4em, 1fr)); gap: .6em .4em; }
+.gauge { margin: 0; display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
+.gauge svg { width: 100%; max-width: 8em; height: auto; overflow: visible; }
+.gauge-track, .gauge-fill { fill: none; stroke-width: 9; stroke-linecap: round; }
+.gauge-track { stroke: var(--track); }
+.gauge-fill { stroke: var(--neutral); }
+.gauge.warn .gauge-fill { stroke: var(--warn-body); }
+.gauge.bad .gauge-fill { stroke: var(--bad); }
+.gauge-value { font-size: 21px; font-weight: 800; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.gauge.warn .gauge-value { fill: var(--warn); }
+.gauge.bad .gauge-value { fill: var(--bad); }
+.gauge-unit { font-size: 10px; font-weight: 700; fill: var(--soft); }
+.gauge figcaption { font-weight: 700; margin-top: -.2em; }
+.gauge-limit { color: var(--soft); font-size: .78em; overflow-wrap: anywhere; }
+.details-toggle { align-self: flex-start; }
+.more { display: flex; flex-direction: column; gap: 14px; }
+
+/* Wide look: one row per computer */
+.fleet.rows { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.pi.wide { border-radius: 18px; }
+.ok.wide { border-left: 10px solid var(--ok-body); }
+.warn.wide { border-left: 10px solid var(--warn-body); }
+.bad.wide { border-left: 10px solid var(--bad-body); }
+.offline.wide { border-left: 10px solid var(--off-body); }
+.wide-body { padding: .8em 1em; display: flex; flex-direction: column; gap: 10px; }
+.wide-body.stale { opacity: .8; }
+.wide-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.wide-who { display: flex; align-items: center; gap: 10px; flex: 0 0 15em; min-width: 0; }
+.wide-who .mascot { width: 3.2em; height: 3.2em; }
+.wide-who .pi-mood { font-size: .9em; }
+.wide-cells { flex: 1 1 30em; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5em, 1fr)); gap: 8px 16px; }
+.cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cell-label { color: var(--soft); font-size: .8em; font-weight: 600; }
+.cell strong { font-size: 1.35em; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cell strong small { font-size: .6em; color: var(--soft); font-weight: 700; }
+.cell-text strong { font-size: 1em; white-space: normal; }
+.cell.warn strong { color: var(--warn); }
+.cell.bad strong { color: var(--bad); }
+.cell .bar { flex: none; height: 6px; }
+.cell-limit { color: var(--soft); font-size: .75em; overflow-wrap: anywhere; }
+.wide .issues { font-size: .92em; }
+@media (max-width: 520px) { .wide-who { flex-basis: 100%; } }
