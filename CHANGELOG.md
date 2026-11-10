@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 (2026-11-10)
+
+- Averages over 5 minutes, 15 minutes, 30 minutes, 1 hour, and 24 hours for each core, CPU, clock speed, load, temperature, fan, memory, voltage, network, storage speed, and Wi-Fi. The hub keeps a day of history in about 350 small buckets per computer.
+- New readings: Wi-Fi signal strength, storage read and write speed, and the busiest program with how many cores it uses.
+- Cards say when a newer version is available. The hub checks GitHub every 6 hours, and `--no-update-check` turns that off.
+- Card order, groups, and row choices are saved on the hub, so every browser sees the same layout. Card size stays per browser.
+- The hub saves its memory every 5 minutes instead of every 30 seconds, to spare SD cards.
+
 ## 0.2.1 (2026-11-10)
 
 - Each card's top shows the board model and memory size, such as "Raspberry Pi 5, 8 GB".

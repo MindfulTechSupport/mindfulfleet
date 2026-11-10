@@ -50,7 +50,7 @@ Before running any script from the internet, you're welcome to read it first: it
 
 ## Arrange your dashboard
 
-Use the **Card size** slider to fit your screen, and **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your layout is saved in that browser, so another computer or browser starts with the default layout.
+Use the **Card size** slider to fit your screen, and **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card size is saved per browser, so a phone and a big screen can differ.
 
 ## What the colors mean
 
@@ -71,13 +71,16 @@ CPU load never changes the color, because some computers, such as miners, are me
 
 - USB fans can't report their speed, so they show "Not reported".
 - A fan's "Fan effort" and the "Voltage" row only appear on boards that report them. Voltage needs a Pi 5.
-- Your card layout and row choices live in one browser.
+- Anyone who can open the dashboard can change its shared layout.
+- Averages cover only the history the hub has. After a hub restart, it picks up from its last save, up to 5 minutes old.
 - Updates are held or skipped per computer, not from the dashboard yet.
 
 ## Security
 
 - The reporter only sends numbers. It accepts no commands and opens no ports.
 - Reports need the fleet token. Both programs run as an unprivileged user under a locked-down service.
+- The hub contacts GitHub every 6 hours to see whether a newer version exists. It sends nothing about your fleet. Start it with `--no-update-check` to turn this off.
+- The reporter sends the name of the busiest program on each computer to the hub.
 - Traffic is plain HTTP, so **it isn't encrypted**. Anyone on your network could read the numbers and the token, and anyone who can open the dashboard can see your fleet. Use it on a home network you trust, and don't forward its port to the internet.
 
 ## Remove it

@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 DEFAULT_INTERVAL = 15
 
 
@@ -135,6 +135,71 @@ def net_rates(before, after):
     seconds = after[2] - before[2]
     return (max(0, round((after[0] - before[0]) / seconds)),
             max(0, round((after[1] - before[1]) / seconds)))
+
+
+def read_wifi_dbm(root="/"):
+    """Wi-Fi signal strength in dBm, or None on a wired connection."""
+    for line in (_read(root, "/proc/net/wireless") or "").splitlines()[2:]:
+        fields = line.split(":", 1)[-1].split()
+        try:
+            return int(float(fields[2]))
+        except (IndexError, ValueError):
+            continue
+    return None
+
+
+def root_device(path="/"):
+    try:
+        device = os.stat(path).st_dev
+        return os.major(device), os.minor(device)
+    except OSError:
+        return None
+
+
+def read_disk_bytes(device, root="/"):
+    """Bytes read from and written to the storage holding the system, from /proc/diskstats."""
+    if not device:
+        return None
+    for line in (_read(root, "/proc/diskstats") or "").splitlines():
+        fields = line.split()
+        if len(fields) > 9 and (int(fields[0]), int(fields[1])) == tuple(device):
+            return int(fields[5]) * 512, int(fields[9]) * 512, time.monotonic()
+    return None
+
+
+def read_process_ticks(root="/"):
+    """CPU time used so far by each running program, in clock ticks."""
+    ticks = {}
+    for path in glob.glob(os.path.join(root, "proc/[0-9]*/stat")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue  # The program ended while we were looking.
+        if ")" not in text:
+            continue
+        name = text[text.index("(") + 1:text.rindex(")")]
+        fields = text[text.rindex(")") + 2:].split()
+        try:
+            ticks[path] = (int(fields[11]) + int(fields[12]), name)
+        except (IndexError, ValueError):
+            continue
+    return ticks, time.monotonic()
+
+
+def busiest_process(before, after, ticks_per_second=None):
+    """The program that used the most CPU between two samples, and how many cores' worth it used, as a percent."""
+    if not before or not after or after[1] <= before[1]:
+        return None, None
+    ticks_per_second = ticks_per_second or os.sysconf("SC_CLK_TCK")
+    best_name, best_ticks = None, 0
+    for key, (used, name) in after[0].items():
+        previous = before[0].get(key)
+        if previous and previous[1] == name and used - previous[0] > best_ticks:
+            best_name, best_ticks = name, used - previous[0]
+    if not best_name:
+        return None, None
+    return best_name, round(100 * best_ticks / ticks_per_second / (after[1] - before[1]), 1)
 
 
 def read_core_volts(run=subprocess.run):
@@ -258,12 +323,15 @@ def local_ip(hub_url):
 
 
 def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subprocess.run,
-            hostname=None, net_before=None, net_after=None):
+            hostname=None, net_before=None, net_after=None, disk_before=None, disk_after=None,
+            procs_before=None, procs_after=None):
     hostname = hostname or socket.gethostname()
     mem_total, mem_used = read_memory(root)
     swap_total, swap_used = read_swap(root)
     mhz_now, mhz_max = read_cpu_mhz(root)
     net_in, net_out = net_rates(net_before, net_after)
+    disk_in, disk_out = net_rates(disk_before, disk_after)  # Same arithmetic: bytes per second between samples.
+    top_name, top_cpu = busiest_process(procs_before, procs_after)
     disk_total, disk_used = read_disk(disk_path)
     return {
         "id": machine_identity(hostname, root),
@@ -291,6 +359,11 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "net_rx_bps": net_in,
         "net_tx_bps": net_out,
         "core_volts": read_core_volts(run),
+        "wifi_dbm": read_wifi_dbm(root),
+        "disk_read_bps": disk_in,
+        "disk_write_bps": disk_out,
+        "top_process": top_name,
+        "top_process_cpu": top_cpu,
         "os_name": read_os_name(root),
         "kernel": os.uname().release[:40] if root == "/" else None,
     }
@@ -323,13 +396,17 @@ def main(argv=None):
     if not args.print_only and (not args.hub or not token):
         parser.error("needs --hub (or MINDFUL_FLEET_HUB) and the MINDFUL_FLEET_TOKEN environment variable")
 
-    before, net_before = read_cpu_times(), read_net_bytes()
+    device = root_device()
+    sample = lambda: (read_cpu_times(), read_net_bytes(), read_disk_bytes(device), read_process_ticks())
+    previous = sample()
     time.sleep(1)
     failing = False
     while True:
-        after, net_after = read_cpu_times(), read_net_bytes()
-        report = collect(args.hub or "", before, after, net_before=net_before, net_after=net_after)
-        before, net_before = after, net_after
+        current = sample()
+        report = collect(args.hub or "", previous[0], current[0], net_before=previous[1], net_after=current[1],
+                         disk_before=previous[2], disk_after=current[2],
+                         procs_before=previous[3], procs_after=current[3])
+        previous = current
         if args.print_only:
             print(json.dumps(report, indent=2))
             return 0

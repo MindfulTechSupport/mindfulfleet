@@ -12,19 +12,25 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
+from averages import History  # noqa: E402
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
 HISTORY_SAMPLES = 120  # 30 minutes at the default 15-second interval.
-SAVE_EVERY_SECONDS = 30
+SAVE_EVERY_SECONDS = 300  # Every 5 minutes, to spare SD cards.
+UPDATE_CHECK_SECONDS = 6 * 3600
+RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/VERSION"
+MAX_LAYOUT_BYTES = 16 * 1024
+_VERSION_RE = re.compile(r"^\d+(\.\d+){1,3}$")
 DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -64,7 +70,9 @@ def _numbers(values, low, high, limit=256):
 
 
 def _text(value, length):
-    return value[:length] if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    return "".join(ch for ch in value[:length] if ch.isprintable()) or None
 
 
 def clean_report(raw):
@@ -111,6 +119,11 @@ def clean_report(raw):
         "net_tx_bps": _number(raw.get("net_tx_bps"), 0, terabytes),
         "core_volts": _number(raw.get("core_volts"), 0, 10),
         "os_name": _text(raw.get("os_name"), 60),
+        "wifi_dbm": _number(raw.get("wifi_dbm"), -150, 50),
+        "disk_read_bps": _number(raw.get("disk_read_bps"), 0, terabytes),
+        "disk_write_bps": _number(raw.get("disk_write_bps"), 0, terabytes),
+        "top_process": _text(raw.get("top_process"), 40),
+        "top_process_cpu": _number(raw.get("top_process_cpu"), 0, 100000),
         "kernel": _text(raw.get("kernel"), 40),
     }
 
@@ -123,6 +136,8 @@ class Fleet:
         self._pis = {}
         self._state_path = Path(state_path) if state_path else None
         self._clock = clock
+        self._memory_layout = {}
+        self.latest_version = None
         self._load()
 
     def _load(self):
@@ -134,7 +149,7 @@ class Fleet:
                     "report": clean_report(saved["report"]),
                     "last_seen": float(saved["last_seen"]),
                     "history": deque(saved.get("history", []), maxlen=HISTORY_SAMPLES),
-                    "core_history": deque(saved.get("core_history", []), maxlen=HISTORY_SAMPLES),
+                    "averages": History(saved.get("averages")),
                     "fan_max_rpm": saved.get("fan_max_rpm", 0),
                 }
         except (OSError, ValueError, KeyError, TypeError) as error:
@@ -150,7 +165,7 @@ class Fleet:
                     "report": p["report"],
                     "last_seen": p["last_seen"],
                     "history": list(p["history"]),
-                    "core_history": list(p["core_history"]),
+                    "averages": p["averages"].to_saved(),
                     "fan_max_rpm": p["fan_max_rpm"],
                 }
                 for pi_id, p in self._pis.items()
@@ -169,17 +184,23 @@ class Fleet:
                     return False
                 pi = self._pis[report["id"]] = {
                     "history": deque(maxlen=HISTORY_SAMPLES),
-                    "core_history": deque(maxlen=HISTORY_SAMPLES),
+                    "averages": History(),
                     "fan_max_rpm": 0,
                 }
             pi["report"] = report
             pi["last_seen"] = self._clock()
             if report["temp_c"] is not None:
                 pi["history"].append(report["temp_c"])
-            if report["cpu_per_core"]:
-                pi["core_history"].append(report["cpu_per_core"])
+            pi["averages"].add(pi["last_seen"], report)
             pi["fan_max_rpm"] = max(pi["fan_max_rpm"], report["fan_rpm"] or 0)
         return True
+
+    def seed_history(self, report, when):
+        """Used by demo mode to fill in a day of pretend history."""
+        with self._lock:
+            pi = self._pis.get(report["id"])
+            if pi:
+                pi["averages"].add(when, report)
 
     def age_all(self, seconds):
         """Used by demo mode to make a Pi look like it went quiet a while ago."""
@@ -190,31 +211,43 @@ class Fleet:
     def snapshot(self):
         now = self._clock()
         with self._lock:
-            pis = [(p["report"], p["last_seen"], list(p["history"]), list(p["core_history"]), p["fan_max_rpm"])
+            pis = [(p["report"], p["last_seen"], list(p["history"]), p["averages"].averages(now), p["fan_max_rpm"])
                    for p in self._pis.values()]
         cards = []
-        for report, last_seen, history, core_history, fan_max_rpm in pis:
+        for report, last_seen, history, averages, fan_max_rpm in pis:
             age = max(0, now - last_seen)
             cards.append({
                 **report,
                 "age_s": round(age),
                 "history": history,
-                "core_average": core_averages(core_history),
+                "averages": averages,
                 "fan_max_rpm": fan_max_rpm,
                 "health": health.assess(report, age, fan_max_rpm),
             })
         cards.sort(key=lambda c: _natural_key(c["hostname"]))
-        return {"version": VERSION, "server_time": now, "pis": cards}
+        return {"version": VERSION, "latest_version": self.latest_version, "server_time": now, "pis": cards}
 
+    def load_layout(self):
+        path = self._layout_path()
+        if not path:
+            return self._memory_layout
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            return {}
 
-def core_averages(samples):
-    """Each core's average load over the remembered samples."""
-    width = max((len(sample) for sample in samples), default=0)
-    averages = []
-    for index in range(width):
-        values = [sample[index] for sample in samples if index < len(sample)]
-        averages.append(round(sum(values) / len(values), 1))
-    return averages
+    def save_layout(self, layout):
+        path = self._layout_path()
+        if not path:
+            self._memory_layout = layout
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as f:
+            json.dump(layout, f)
+        os.replace(f.name, path)
+
+    def _layout_path(self):
+        return self._state_path.with_name("layout.json") if self._state_path else None
 
 
 _NUMBER_WORDS = {word: index + 1 for index, word in enumerate(
@@ -225,6 +258,37 @@ def _natural_key(text):
     """Sort so pi2 comes before pi10, and BrainOne before BrainTwo."""
     spelled = re.sub("|".join(_NUMBER_WORDS), lambda m: f"{_NUMBER_WORDS[m.group()]:02d}", text.lower())
     return [(0, int(part)) if part.isdigit() else (1, part) for part in re.split(r"(\d+)", spelled) if part]
+
+
+def clean_layout(raw):
+    """Keep only the shared parts of a dashboard layout. Card size stays in each browser."""
+    if not isinstance(raw, dict):
+        raise BadReport("layout must be an object")
+    ids = [i for i in raw.get("order", []) if isinstance(i, str) and _ID_RE.match(i)][:MAX_PIS]
+    groups = []
+    for group in raw.get("groups", [])[:64]:
+        if isinstance(group, dict) and isinstance(group.get("id"), str) and re.match(r"^g[a-z0-9]{1,20}$", group["id"]):
+            groups.append({"id": group["id"], "name": _text(group.get("name"), 40) or "Group"})
+    known = {g["id"] for g in groups}
+    members = raw.get("members", {})
+    members = {k: v for k, v in members.items() if isinstance(k, str) and _ID_RE.match(k) and v in known} \
+        if isinstance(members, dict) else {}
+    hidden = [h for h in raw.get("hidden", []) if isinstance(h, str) and re.match(r"^[a-z]{1,20}$", h)][:40]
+    return {"order": ids, "groups": groups, "members": members, "hidden": hidden}
+
+
+def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
+    """Ask GitHub which version is on the release line, so cards can say when an update is waiting."""
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=15) as response:
+                text = response.read(32).decode().strip()
+            if _VERSION_RE.match(text):
+                fleet.latest_version = text
+        except (OSError, ValueError):
+            pass  # Offline or blocked. Cards just won't show the note.
+        if stop.wait(UPDATE_CHECK_SECONDS):
+            return
 
 
 def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
@@ -255,6 +319,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
             path = self.path.split("?", 1)[0]
             if path == "/api/fleet":
                 self._json(200, fleet.snapshot())
+            elif path == "/api/layout":
+                self._json(200, fleet.load_layout())
             elif path == "/healthz":
                 self._json(200, {"ok": True, "version": VERSION})
             elif path in STATIC_FILES:
@@ -264,6 +330,29 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
                 self._json(404, {"error": "not found"})
 
         do_HEAD = do_GET
+
+        def do_PUT(self):
+            # Browsers can't send this from another site without asking first, and the hub never says yes.
+            if self.path != "/api/layout" or not self.headers.get("Content-Type", "").startswith("application/json"):
+                self.close_connection = True
+                return self._json(404, {"error": "not found"})
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.close_connection = True
+                return self._json(411, {"error": "length required"})
+            if not 0 < length <= MAX_LAYOUT_BYTES:
+                self.close_connection = True
+                return self._json(413, {"error": "layout too large"})
+            try:
+                layout = clean_layout(json.loads(self.rfile.read(length)))
+            except (ValueError, UnicodeDecodeError) as error:
+                return self._json(400, {"error": str(error)})
+            try:
+                fleet.save_layout(layout)
+            except OSError:
+                return self._json(500, {"error": "couldn't save"})
+            self._json(200, layout)
 
         def do_POST(self):
             # Read errors close the connection, since the body may be unread.
@@ -300,7 +389,7 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "hostname": name,
         "ip": f"192.168.1.{10 + sum(map(ord, name)) % 200}",
         "model": "Raspberry Pi 5 Model B Rev 1.0",
-        "reporter_version": VERSION,
+        "reporter_version": "0.2.1" if name == "media-pi" else VERSION,
         "temp_c": round(temp + random.uniform(-0.6, 0.6), 1),
         "throttled": throttled,
         "fan_rpm": fan if fan is not None else 2400 + random.randint(-80, 80),
@@ -322,6 +411,11 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "net_tx_bps": random.randint(1000, 9000),
         "core_volts": 0.88,
         "os_name": "Debian GNU/Linux 13 (trixie)",
+        "wifi_dbm": None if name in ("garage-pi", "attic-pi") else random.randint(-68, -52),
+        "disk_read_bps": random.randint(0, 4000),
+        "disk_write_bps": random.randint(2000, 30000),
+        "top_process": "xmrig" if sum(cpu or [0]) > 250 else "python3",
+        "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),
         "kernel": "6.18.50+rpt-rpi-2712",
     }
 
@@ -342,6 +436,11 @@ def run_demo(fleet, stop):
     for _ in range(40):
         for name, temp, kwargs in cast:
             fleet.record(demo_report(name, temp, **kwargs))
+    now = time.time()
+    for minutes_ago in [*range(1440, 60, -5), *range(60, 0, -1)]:
+        swing = 4 * math.sin(minutes_ago / 180)  # Warmer in the afternoon, cooler at night.
+        for name, temp, kwargs in cast:
+            fleet.seed_history(clean_report(demo_report(name, temp + swing, **kwargs)), now - minutes_ago * 60)
     while not stop.wait(5):
         for name, temp, kwargs in cast:
             fleet.record(demo_report(name, temp, **kwargs))
@@ -354,6 +453,9 @@ def main(argv=None):
     parser.add_argument("--state", default=os.environ.get("MINDFUL_FLEET_STATE"),
                         help="file that remembers your Pis between restarts")
     parser.add_argument("--demo", action="store_true", help="show a pretend fleet on this computer only")
+    parser.add_argument("--no-update-check", action="store_true",
+                        default=os.environ.get("MINDFUL_FLEET_UPDATE_CHECK", "on") == "off",
+                        help="don't ask GitHub for the latest version")
     parser.add_argument("--version", action="version", version=VERSION)
     args = parser.parse_args(argv)
     token = os.environ.get("MINDFUL_FLEET_TOKEN")
@@ -376,6 +478,7 @@ def main(argv=None):
     signal.signal(signal.SIGINT, shut_down)
 
     if args.demo:
+        fleet.latest_version = VERSION
         threading.Thread(target=run_demo, args=(fleet, stop), daemon=True).start()
     else:
         def keep_saving():
@@ -385,6 +488,8 @@ def main(argv=None):
                 except OSError as error:
                     print(f"Couldn't save state: {error}", file=sys.stderr, flush=True)
         threading.Thread(target=keep_saving, daemon=True).start()
+        if not args.no_update_check:
+            threading.Thread(target=check_latest_version, args=(fleet, stop), daemon=True).start()
 
     print(f"Mindful Fleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
     server.serve_forever()

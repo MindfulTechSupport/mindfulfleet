@@ -15,6 +15,7 @@ sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter")]
 import health  # noqa: E402
 import mindful_fleet_hub as hub  # noqa: E402
 import mindful_fleet_reporter as reporter  # noqa: E402
+import averages  # noqa: E402
 
 GIB = 1024**3
 
@@ -22,7 +23,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.1", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.2", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -185,6 +186,30 @@ class ReporterTests(unittest.TestCase):
             (root / "proc/cpuinfo").write_text(f"Hardware\t: BCM2835\nRevision\t: {code}\n")
             self.assertEqual(reporter.read_board_ram_mb(str(root)), mb, code)
 
+    def test_wifi_disk_and_busiest_program(self):
+        root = self.root
+        (root / "proc/net").mkdir(exist_ok=True)
+        (root / "proc/net/wireless").write_text(
+            "Inter-| sta-|   Quality        |\n face | tus | link level noise |\n"
+            " wlan0: 0000   54.  -56.  -256        0      0      0      0     11        0\n")
+        self.assertEqual(reporter.read_wifi_dbm(str(root)), -56)
+        self.assertIsNone(reporter.read_wifi_dbm(tempfile.mkdtemp(dir=self.dir.name)))
+        (root / "proc/diskstats").write_text(
+            " 179       0 mmcblk0 100 0 9000 0 50 0 3000 0 0 0 0\n"
+            " 179       2 mmcblk0p2 80 0 8000 0 40 0 2000 0 0 0 0\n")
+        read, written, _ = reporter.read_disk_bytes((179, 2), str(root))
+        self.assertEqual((read, written), (8000 * 512, 2000 * 512))
+        self.assertIsNone(reporter.read_disk_bytes((8, 1), str(root)))
+        for pid, name, ticks in ((10, "xmrig", 1000), (20, "my (odd) prog", 50)):
+            folder = root / f"proc/{pid}"
+            folder.mkdir()
+            (folder / "stat").write_text(f"{pid} ({name}) S 1 1 1 0 -1 0 0 0 0 0 {ticks} 0 0 0 20\n")
+        before = reporter.read_process_ticks(str(root))
+        self.assertEqual(before[0][str(root / "proc/20/stat")], (50, "my (odd) prog"))
+        after = ({**before[0], str(root / "proc/10/stat"): (1400, "xmrig")}, before[1] + 1.0)
+        self.assertEqual(reporter.busiest_process(before, after, ticks_per_second=100), ("xmrig", 400.0))
+        self.assertEqual(reporter.busiest_process(before, before), (None, None))
+
     def test_core_volts(self):
         class Result:
             returncode = 0
@@ -275,6 +300,36 @@ class HubTests(unittest.TestCase):
         self.assertEqual(self.post(old), 200)
         self.assertEqual(self.fleet_json()["pis"][0]["cpu_mhz"], [])
 
+    def test_layout_saved_and_cleaned(self):
+        def put(body, content_type="application/json"):
+            request = urllib.request.Request(self.base + "/api/layout", data=json.dumps(body).encode(), method="PUT",
+                                             headers={"Content-Type": content_type})
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                return error.code
+        layout = {"order": ["abcdef01", "<bad>"], "groups": [{"id": "gabc", "name": "Miners\u0007"}],
+                  "members": {"abcdef01": "gabc", "abcdef02": "gnope"}, "hidden": ["swap"], "size": 60}
+        self.assertEqual(put(layout), 200)
+        with urllib.request.urlopen(self.base + "/api/layout") as response:
+            saved = json.load(response)
+        self.assertEqual(saved, {"order": ["abcdef01"], "groups": [{"id": "gabc", "name": "Miners"}],
+                                 "members": {"abcdef01": "gabc"}, "hidden": ["swap"]})
+        self.assertEqual(put(layout, "text/plain"), 404)
+        self.assertEqual(put([1]), 400)
+
+    def test_latest_version_check(self):
+        folder = tempfile.mkdtemp()
+        Path(folder, "VERSION").write_text("0.9.1\n")
+        stop = threading.Event()
+        stop.set()
+        hub.check_latest_version(self.fleet, stop, url=Path(folder, "VERSION").as_uri())
+        self.assertEqual(self.fleet_json()["latest_version"], "0.9.1")
+        Path(folder, "VERSION").write_text("<html>")
+        hub.check_latest_version(self.fleet, stop, url=Path(folder, "VERSION").as_uri())
+        self.assertEqual(self.fleet.latest_version, "0.9.1")
+
     def test_extra_fields_dropped(self):
         self.post(report(surprise="data"))
         self.assertNotIn("surprise", self.fleet_json()["pis"][0])
@@ -299,14 +354,38 @@ class HubTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 404)
 
 
+class AverageTests(unittest.TestCase):
+    def test_windows(self):
+        history = averages.History()
+        start = 1_000_000 * 60
+        for minute in range(120):  # Two hours: temp 40 for the first, 60 for the second.
+            history.add(start + minute * 60, report(temp_c=40.0 if minute < 60 else 60.0, cpu_per_core=[100.0, 0.0]))
+        result = history.averages(start + 119 * 60)
+        windows = result["windows"]
+        self.assertEqual(windows["5m"]["temp"], 60.0)
+        self.assertEqual(windows["1h"]["temp"], 60.0)
+        self.assertEqual(windows["24h"]["temp"], 50.0)
+        self.assertEqual((windows["5m"]["cpu"], windows["5m"]["core0"], windows["5m"]["core1"]), (50.0, 100.0, 0.0))
+        self.assertEqual(result["minutes"], 120)
+
+    def test_survives_save_and_old_buckets_fall_off(self):
+        history = averages.History()
+        history.add(0, report(temp_c=90.0))
+        history.add(2 * 86400, report(temp_c=30.0))
+        copy = averages.History(json.loads(json.dumps(history.to_saved())))
+        self.assertEqual(copy.averages(2 * 86400)["windows"]["24h"]["temp"], 30.0)
+
+    def test_missing_readings_are_skipped(self):
+        history = averages.History()
+        history.add(0, report(fan_rpm=None))
+        self.assertNotIn("fan", history.averages(0)["windows"]["5m"])
+
+
 class OrderTests(unittest.TestCase):
     def test_spelled_and_written_numbers_sort_in_order(self):
         names = ["BrainTwo", "BrainFive", "BrainOne", "pi10", "pi2"]
         self.assertEqual(sorted(names, key=hub._natural_key), ["BrainOne", "BrainTwo", "BrainFive", "pi2", "pi10"])
 
-    def test_core_averages(self):
-        self.assertEqual(hub.core_averages([[100, 0], [50, 0]]), [75.0, 0.0])
-        self.assertEqual(hub.core_averages([]), [])
 
 
 class StateTests(unittest.TestCase):

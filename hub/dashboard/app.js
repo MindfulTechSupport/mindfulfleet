@@ -12,9 +12,14 @@ const NOMINAL_VOLTS = 5;
 const ROWS = [
   ["trend", "Temperature trend"], ["fan", "Fan"], ["speed", "Speed"], ["power", "Power and voltage"],
   ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
-  ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"], ["network", "Network"],
+  ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
+  ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["averages", "Averages"],
   ["uptime", "Running for"], ["system", "System"],
 ];
+const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
+const SHARED_KEYS = ["order", "groups", "members", "hidden"];
+let latestVersion = null;
+let layoutSaveTimer = null;
 
 const layout = loadLayout();
 let arranging = false;
@@ -150,6 +155,90 @@ function boardMemory(pi) {
   return mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`;
 }
 
+function versionBelow(version, target) {
+  if (!version || !target) return false;
+  const a = version.split(".").map(Number);
+  const b = target.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+  }
+  return false;
+}
+
+function wifiWords(dbm) {
+  if (dbm >= -55) return "Excellent";
+  if (dbm >= -67) return "Good";
+  if (dbm >= -75) return "Fair";
+  return "Weak";
+}
+
+const AVERAGE_ROWS = [
+  ["cpu", "CPU %", (v) => Math.round(v)],
+  ["clock", "Clock GHz", (v) => (v / 1000).toFixed(2)],
+  ["load", "Load", (v) => v.toFixed(2)],
+  ["temp", "Temp °C", (v) => Math.round(v)],
+  ["fan", "Fan RPM", (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
+  ["memory", "Memory %", (v) => Math.round(v)],
+  ["volts", "Input V", (v) => v.toFixed(2)],
+  ["net_in", "Net in KB/s", (v) => Math.round(v / 1024)],
+  ["net_out", "Net out KB/s", (v) => Math.round(v / 1024)],
+  ["disk_read", "Read KB/s", (v) => Math.round(v / 1024)],
+  ["disk_write", "Write KB/s", (v) => Math.round(v / 1024)],
+  ["wifi", "Wi-Fi dBm", (v) => Math.round(v)],
+];
+
+function averagesTable(pi) {
+  const data = pi.averages && pi.averages.windows;
+  if (!data || !data["5m"]) return null;
+  const cores = pi.cpu_per_core.length;
+  const now = {
+    cpu: pi.health.cpu.average, clock: average(pi.cpu_mhz), load: pi.load_avg[0], temp: pi.temp_c,
+    fan: pi.fan_rpm, memory: pi.health.memory.percent, volts: pi.input_volts, net_in: pi.net_rx_bps,
+    net_out: pi.net_tx_bps, disk_read: pi.disk_read_bps, disk_write: pi.disk_write_bps, wifi: pi.wifi_dbm,
+  };
+  const rows = [];
+  for (const [key, label, format] of AVERAGE_ROWS) {
+    rows.push([key, label, format]);
+    if (key === "cpu") {
+      for (let i = 0; i < cores; i++) {
+        now[`core${i}`] = pi.cpu_per_core[i];
+        rows.push([`core${i}`, `Core ${i + 1} %`, (v) => Math.round(v)]);
+      }
+    }
+  }
+
+  const wrap = el("div", "averages");
+  const table = el("table");
+  const caption = el("caption", "", "Averages");
+  table.appendChild(caption);
+  const head = el("tr");
+  head.appendChild(el("th", "", ""));
+  head.appendChild(el("th", "", "Now"));
+  for (const [, label, long] of WINDOWS) {
+    const th = el("th", "", label);
+    th.title = `Average over the last ${long}`;
+    head.appendChild(th);
+  }
+  const thead = el("thead");
+  thead.appendChild(head);
+  const tbody = el("tbody");
+  for (const [key, label, format] of rows) {
+    const values = [now[key], ...WINDOWS.map(([name]) => data[name] && data[name][key])];
+    if (values.every((value) => value == null)) continue;
+    const tr = el("tr");
+    tr.appendChild(el("th", "", label));
+    for (const value of values) tr.appendChild(el("td", "", value == null ? "—" : String(format(value))));
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  wrap.appendChild(table);
+  const minutes = pi.averages.minutes;
+  if (minutes < 1440) {
+    wrap.appendChild(el("p", "averages-note", `The hub has ${duration(minutes * 60)} of history so far, so longer averages cover only that.`));
+  }
+  return wrap;
+}
+
 function meter(percent, level, label, detail, title) {
   const wrap = el("dd", "meter");
   if (percent == null) {
@@ -171,7 +260,7 @@ function meter(percent, level, label, detail, title) {
 function coreGrid(pi) {
   const grid = el("div", "cores");
   pi.cpu_per_core.forEach((value, i) => {
-    const avg = pi.core_average[i];
+    const avg = pi.averages && pi.averages.windows["30m"] ? pi.averages.windows["30m"][`core${i}`] : null;
     const mhz = pi.cpu_mhz[i];
     const cell = el("div", "core");
     cell.title = `Core ${i + 1}: ${Math.round(value)}% now, ${avg == null ? "no" : `${Math.round(avg)}%`} average over 30 minutes`;
@@ -180,7 +269,6 @@ function coreGrid(pi) {
     level.style.height = `${value}%`;
     column.appendChild(level);
     cell.append(el("small", "", `Core ${i + 1}`), column, el("strong", "", `${Math.round(value)}%`));
-    if (avg != null) cell.appendChild(el("small", "", `avg ${Math.round(avg)}%`));
     if (mhz != null) cell.appendChild(el("small", "", ghz(mhz)));
     grid.appendChild(cell);
   });
@@ -292,15 +380,26 @@ function card(pi, section) {
   if (mhz != null && pi.cpu_max_mhz) {
     row("clock", "Clock speed", meter(mhz / pi.cpu_max_mhz * 100, "", ghz(mhz), `of ${ghz(pi.cpu_max_mhz)} max`, "Average across cores"));
   }
+  if (pi.top_process) {
+    const used = pi.top_process_cpu / 100;
+    row("top", "Busiest program", text({ level: "", text: pi.top_process }, cores ? `using ${used.toFixed(2)} of ${cores} cores` : `${pi.top_process_cpu}% of one core`));
+  }
   if (pi.load_avg.length && cores) {
-    const [one, five, fifteen] = pi.load_avg;
-    row("load", "Load", meter(one / cores * 100, "", one.toFixed(2), `of ${cores} cores, 5 and 15 min: ${five.toFixed(2)}, ${fifteen.toFixed(2)}`, "How many tasks are running or waiting. Equal to the core count means fully busy"));
+    const one = pi.load_avg[0];
+    row("load", "Load", meter(one / cores * 100, "", one.toFixed(2), `of ${cores} cores`, "How many tasks are running or waiting. Equal to the core count means fully busy"));
   }
   row("memory", "Memory", meter(h.memory.percent, h.memory.level, `${Math.round(h.memory.percent)}%`, `${bytes(pi.mem_used)} of ${bytes(pi.mem_total)} usable`));
   if (pi.swap_total) {
     row("swap", "Swap", meter(pi.swap_used / pi.swap_total * 100, "", `${Math.round(pi.swap_used / pi.swap_total * 100)}%`, `${bytes(pi.swap_used)} of ${bytes(pi.swap_total)}`, "Disk space used as overflow memory"));
   }
   row("storage", "Storage", meter(h.disk.percent, h.disk.level, `${Math.round(h.disk.percent)}%`, `${bytes(pi.disk_used)} of ${bytes(pi.disk_total)}`));
+  if (pi.disk_read_bps != null) {
+    row("diskio", "Storage speed", text({ level: "", text: `↓ ${rate(pi.disk_read_bps)}  ↑ ${rate(pi.disk_write_bps)}` }, "read and write"));
+  }
+  if (pi.wifi_dbm != null) {
+    const strength = Math.max(0, Math.min(100, (pi.wifi_dbm + 90) / 60 * 100));
+    row("wifi", "Wi-Fi", meter(strength, pi.wifi_dbm < -75 ? "warn" : "", `${pi.wifi_dbm} dBm`, `${wifiWords(pi.wifi_dbm)} signal`, "Closer to 0 dBm is stronger. -90 dBm is barely usable"));
+  }
   if (pi.net_rx_bps != null) {
     row("network", "Network", text({ level: "", text: `↓ ${rate(pi.net_rx_bps)}  ↑ ${rate(pi.net_tx_bps)}` }, "in and out"));
   }
@@ -308,10 +407,17 @@ function card(pi, section) {
   if (pi.os_name || pi.kernel) {
     const system = text({ level: "", text: pi.os_name || "Unknown" }, pi.kernel ? `kernel ${pi.kernel}` : "");
     if (pi.reporter_version) system.appendChild(el("small", "detail", `Mindful Fleet ${pi.reporter_version}`));
+    if (versionBelow(pi.reporter_version, latestVersion)) {
+      system.appendChild(el("small", "detail update", `Update available: ${latestVersion}`));
+    }
     row("system", "System", system);
   }
   body.appendChild(facts);
   if (pi.cpu_per_core.length && shown("cores")) body.appendChild(coreGrid(pi));
+  if (shown("averages")) {
+    const table = averagesTable(pi);
+    if (table) body.appendChild(table);
+  }
 
   article.append(head, body);
   return article;
@@ -333,7 +439,30 @@ function sortedPis() {
 
 function commit() {
   saveLayout();
+  shareLayout();
   render();
+}
+
+function shareLayout() {
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(() => {
+    const shared = Object.fromEntries(SHARED_KEYS.map((key) => [key, layout[key]]));
+    fetch("/api/layout", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(shared) })
+      .catch(() => {}); // An older hub can't store layouts. This browser still keeps its own copy.
+  }, 600);
+}
+
+async function loadSharedLayout() {
+  try {
+    const response = await fetch("/api/layout", { cache: "no-store" });
+    if (!response.ok) return;
+    const shared = await response.json();
+    if (!shared || !Array.isArray(shared.order)) return;
+    for (const key of SHARED_KEYS) if (shared[key]) layout[key] = shared[key];
+    saveLayout();
+  } catch (error) {
+    // Keep this browser's own layout.
+  }
 }
 
 function setGroup(piId, groupId) {
@@ -467,8 +596,9 @@ async function refresh() {
   try {
     const response = await fetch("/api/fleet", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { pis } = await response.json();
+    const { pis, latest_version: latest } = await response.json();
     latestPis = pis;
+    latestVersion = latest;
     connection.hidden = true;
     document.getElementById("empty").hidden = pis.length > 0;
     document.getElementById("summary").textContent = pis.length ? headline(pis) : "Your fleet is empty.";
@@ -534,6 +664,8 @@ function setUpTools() {
   });
 }
 
-setUpTools();
-refresh();
-setInterval(refresh, REFRESH_MS);
+loadSharedLayout().finally(() => {
+  setUpTools();
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+});

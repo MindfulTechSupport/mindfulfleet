@@ -122,6 +122,16 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .stale { opacity: .8; }
 .foot { padding-top: 28px; padding-bottom: 32px; color: var(--soft); font-size: .8rem; }
 .foot p { margin: 0; max-width: 70ch; }
+.averages { overflow-x: auto; }
+.averages table { width: 100%; border-collapse: collapse; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.averages caption { text-align: left; font-weight: 800; font-size: .95rem; padding-bottom: 6px; }
+.averages th, .averages td { padding: 3px 3px; text-align: right; white-space: nowrap; }
+.averages thead th { color: var(--soft); font-weight: 700; border-bottom: 1.5px solid var(--track); }
+.averages tbody th { text-align: left; color: var(--soft); font-weight: 600; }
+.averages tbody tr:nth-child(even) { background: color-mix(in srgb, var(--track) 35%, transparent); }
+.averages td:nth-child(2) { font-weight: 800; }
+.averages-note { margin: 6px 0 0; color: var(--soft); font-size: .78rem; }
+.detail.update { color: var(--warn); font-weight: 700; }
 @media (max-width: 520px) {
   .rows { position: static; }
   .row-list { left: 16px; right: 16px; grid-template-columns: 1fr 1fr; }
