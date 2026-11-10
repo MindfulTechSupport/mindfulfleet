@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.8"
+VERSION = "0.2.9"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -30,6 +31,7 @@ SAVE_EVERY_SECONDS = 300  # Every 5 minutes, to spare SD cards.
 UPDATE_CHECK_SECONDS = 6 * 3600
 RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/VERSION"
 MAX_LAYOUT_BYTES = 16 * 1024
+HISTORY_READINGS = ("temp", "hashrate", "watts", "cpu", "fan", "memory", "clock", "sensor_watts")
 _VERSION_RE = re.compile(r"^\d+(\.\d+){1,3}$")
 DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
 STATIC_FILES = {
@@ -73,6 +75,26 @@ def _text(value, length):
     if not isinstance(value, str):
         return None
     return "".join(ch for ch in value[:length] if ch.isprintable()) or None
+
+
+def _sensors(values):
+    """Extra power sensors, such as one on a fan's supply line."""
+    if values is None:
+        return []
+    if not isinstance(values, list) or len(values) > 8:
+        raise BadReport("bad sensor list")
+    cleaned = []
+    for item in values:
+        if not isinstance(item, dict):
+            raise BadReport("bad sensor")
+        cleaned.append({
+            "label": _text(item.get("label"), 40) or "Power sensor",
+            "chip": _text(item.get("chip"), 20),
+            "volts": _number(item.get("volts"), 0, 100),
+            "amps": _number(item.get("amps"), -100, 100),
+            "watts": _number(item.get("watts"), 0, 10000),
+        })
+    return cleaned
 
 
 def clean_report(raw):
@@ -125,6 +147,7 @@ def clean_report(raw):
         "disk_write_bps": _number(raw.get("disk_write_bps"), 0, terabytes),
         "top_process": _text(raw.get("top_process"), 40),
         "top_process_cpu": _number(raw.get("top_process_cpu"), 0, 100000),
+        "sensors": _sensors(raw.get("sensors")),
         "hashrate": _number(raw.get("hashrate"), 0, 1e12),
         "hashrate_15m": _number(raw.get("hashrate_15m"), 0, 1e12),
         "mining_threads": _number(raw.get("mining_threads"), 0, 4096),
@@ -210,6 +233,11 @@ class Fleet:
             # The 15-minute figure, so one lucky 10-second burst doesn't set the bar.
             pi["hashrate_max"] = max(pi["hashrate_max"], report.get("hashrate_15m") or 0)
         return True
+
+    def history(self, pi_id, names=HISTORY_READINGS):
+        with self._lock:
+            pi = self._pis.get(pi_id)
+            return pi["averages"].series(self._clock(), names) if pi else None
 
     def seed_history(self, report, when):
         """Used by demo mode to fill in a day of pretend history."""
@@ -338,6 +366,14 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
             path = self.path.split("?", 1)[0]
             if path == "/api/fleet":
                 self._json(200, fleet.snapshot())
+            elif path == "/api/history":
+                query = urllib.parse.parse_qs(self.path.partition("?")[2])
+                pi_id = (query.get("id") or [""])[0]
+                found = fleet.history(pi_id) if _ID_RE.match(pi_id) else None
+                if found is None:
+                    self._json(404, {"error": "unknown computer"})
+                else:
+                    self._json(200, found)
             elif path == "/api/layout":
                 self._json(200, fleet.load_layout())
             elif path == "/healthz":
@@ -438,6 +474,9 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
             "hashrate_15m": round(sum(cpu) * 3.1, 1), "mining_threads": sum(1 for c in cpu if c > 50),
             "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:20004", "pool_tls": "TLSv1.3", "rig_id": "rig01", "algo": "rx/0",
             "miner_version": "6.24.0"} if cpu and sum(cpu) > 250 else {}),
+        "sensors": [{"label": "Fan supply", "chip": "ina219", "volts": round(12.02 + random.uniform(-0.03, 0.03), 2),
+                     "amps": round(0.41 + random.uniform(-0.02, 0.02), 3), "watts": round(4.93 + random.uniform(-0.2, 0.2), 2)}]
+        if name == "attic-pi" else [],
         "top_process": "xmrig" if sum(cpu or [0]) > 250 else "python3",
         "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),
         "kernel": "6.18.50+rpt-rpi-2712",

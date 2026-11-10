@@ -30,10 +30,16 @@ install -m 755 "$SOURCE"/reporter/mindful_fleet_reporter.py /opt/mindful-fleet/r
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
 umask 027
-cat > /etc/mindful-fleet/reporter.env <<EOF
-MINDFUL_FLEET_HUB=$HUB
-MINDFUL_FLEET_TOKEN=$TOKEN
-EOF
+# Keep any other settings someone added, such as sensor names or the XMRig address.
+EXTRA=""
+if [ -f /etc/mindful-fleet/reporter.env ]; then
+  EXTRA="$(grep -vE '^MINDFUL_FLEET_(HUB|TOKEN)=' /etc/mindful-fleet/reporter.env || true)"
+fi
+{
+  echo "MINDFUL_FLEET_HUB=$HUB"
+  echo "MINDFUL_FLEET_TOKEN=$TOKEN"
+  if [ -n "$EXTRA" ]; then printf '%s\n' "$EXTRA"; fi
+} > /etc/mindful-fleet/reporter.env
 chown root:mindful-fleet /etc/mindful-fleet/reporter.env
 chmod 640 /etc/mindful-fleet/reporter.env
 

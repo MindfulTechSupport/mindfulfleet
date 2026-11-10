@@ -18,9 +18,12 @@
     <details id="settings" class="settings" open>
       <summary>Settings</summary>
       <div class="tools">
-        <label class="size pick"><span>Look</span>
-          <select id="look" aria-label="Card look"></select>
-        </label>
+        <div class="look-row">
+          <label class="size pick"><span>Look</span>
+            <select id="look" aria-label="Card look"></select>
+          </label>
+          <button id="expand-all" type="button" aria-pressed="false" hidden>Expand all</button>
+        </div>
         <label class="size"><span>Card width</span>
           <input id="width" type="range" min="200" max="640" step="1" value="340">
           <span id="width-value" class="slider-value"></span>

@@ -54,6 +54,22 @@ Before running any script from the internet, you're welcome to read it first: it
 
 Pick a **Look**: Tall shows every reading, Wide puts each computer on one row for big fleets, and Gauges shows round dials. Use the **Card width**, **Text size** and **Card height** sliders to fit your screen. With a set height, each card scrolls to show the rest. Use **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card width, text size and height are saved per browser, so a phone and a big screen can differ.
 
+In the Wide and Gauges looks, **Expand all** opens every card's full readings at once, and **Collapse all** closes them again. You can still open or close one card on its own.
+
+Each card has a **Last 24 hours** chart. Pick a reading from its menu (temperature, hashrate, power use, CPU, fan, memory, clock speed, or a power sensor) and hover over the line to see the value at any time. The hub keeps one average per 5 minutes, so a new computer's chart fills in over the first day.
+
+## Power sensors (optional)
+
+The Pi 5 measures its own power, but not what a fan or other add-on draws from a separate supply. An INA219, INA226 or INA260 power sensor board on the Pi's I2C pins can measure that. Once Linux reads the sensor (turn on I2C with `sudo raspi-config` and add the sensor's line to `/boot/firmware/config.txt`, such as `dtoverlay=i2c-sensor,ina219`), the card shows its volts, amps and watts with no other setup.
+
+To give sensors names, add a line like this to `/etc/mindful-fleet/reporter.env` and run `sudo systemctl restart mindful-fleet-reporter`:
+
+```
+MINDFUL_FLEET_SENSOR_LABELS=Fan supply,Pump
+```
+
+Names are used in the order the sensors are found. This support hasn't been tested on real sensor hardware yet.
+
 ## Mining
 
 If a computer runs the XMRig miner, its card can show hashrate, cores mining, shares accepted, and hashes per watt. XMRig shares these through its built-in web API, which is off by default. To turn it on, run this on each miner:

@@ -24,7 +24,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.8", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.9", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -226,6 +226,22 @@ class ReporterTests(unittest.TestCase):
             stdout = "error=2 error_msg=\"Invalid arguments\"\n"
         self.assertEqual(reporter.read_pmic(lambda *a, **k: Pi4()), (None, None))
 
+    def test_power_sensors(self):
+        folder = self.root / "sys/class/hwmon/hwmon5"
+        folder.mkdir(parents=True)
+        (folder / "name").write_text("ina219\n")
+        (folder / "in1_input").write_text("12020\n")
+        (folder / "curr1_input").write_text("410\n")
+        (folder / "power1_input").write_text("4930000\n")
+        other = self.root / "sys/class/hwmon/hwmon6"
+        other.mkdir(parents=True)
+        (other / "name").write_text("ina260\n")
+        (other / "in1_input").write_text("5000\n")
+        (other / "curr1_input").write_text("200\n")
+        found = reporter.read_power_sensors(str(self.root), ["Fan supply"])
+        self.assertEqual(found[0], {"label": "Fan supply", "chip": "ina219", "volts": 12.02, "amps": 0.41, "watts": 4.93})
+        self.assertEqual((found[1]["label"], found[1]["watts"]), ("Power sensor 2", 1.0))
+
     def test_core_volts(self):
         class Result:
             returncode = 0
@@ -345,6 +361,22 @@ class HubTests(unittest.TestCase):
         Path(folder, "VERSION").write_text("<html>")
         hub.check_latest_version(self.fleet, stop, url=Path(folder, "VERSION").as_uri())
         self.assertEqual(self.fleet.latest_version, "0.9.1")
+
+    def test_history_endpoint(self):
+        self.post(report())
+        with urllib.request.urlopen(self.base + "/api/history?id=abcdef0123456789") as response:
+            data = json.load(response)
+        self.assertEqual(data["values"]["temp"], [50.0])
+        for bad in ("nope", "../x", "ffffffffffffffff"):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(self.base + "/api/history?id=" + bad)
+            self.assertEqual(caught.exception.code, 404)
+
+    def test_sensors_checked(self):
+        self.assertEqual(self.post(report(sensors=[{"label": "Fan", "volts": 12.0, "amps": 0.4, "watts": 4.8}])), 200)
+        self.assertEqual(self.fleet_json()["pis"][0]["sensors"][0]["watts"], 4.8)
+        self.assertEqual(self.post(report(sensors=[{"watts": "lots"}])), 400)
+        self.assertEqual(self.post(report(sensors="x")), 400)
 
     def test_extra_fields_dropped(self):
         self.post(report(surprise="data"))
@@ -488,6 +520,17 @@ class AverageTests(unittest.TestCase):
         for minute, bits in enumerate((0x0, 0x4, 0x50000, 0x8)):  # Only "now" bits count.
             history.add(minute * 60, report(throttled=bits))
         self.assertEqual(history.averages(180)["windows"]["5m"]["slowed"], 50.0)
+
+    def test_series_for_charts(self):
+        history = averages.History()
+        start = 1_000_000 * 300
+        for minute in range(30):
+            history.add(start + minute * 60, report(temp_c=40.0 + minute // 5, sensors=[{"watts": 2.0}]))
+        series = history.series(start + 29 * 60, ("temp", "fan_missing", "sensor_watts"))
+        self.assertEqual(len(series["times"]), 6)
+        self.assertEqual(series["values"]["temp"], [40.0, 41.0, 42.0, 43.0, 44.0, 45.0])
+        self.assertEqual(series["values"]["fan_missing"], [None] * 6)
+        self.assertEqual(series["values"]["sensor_watts"], [2.0] * 6)
 
     def test_missing_readings_are_skipped(self):
         history = averages.History()

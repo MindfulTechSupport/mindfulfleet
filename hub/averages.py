@@ -25,6 +25,10 @@ def readings(report):
         "watts": report.get("board_watts"),
         "hashrate": report.get("hashrate"),
     }
+    sensors = report.get("sensors") or []
+    sensor_watts = [s.get("watts") for s in sensors if s.get("watts") is not None]
+    if sensor_watts:
+        values["sensor_watts"] = sum(sensor_watts)
     throttled = report.get("throttled")
     if throttled is not None:
         values["slowed"] = 100.0 if throttled & 0b1110 else 0.0  # Percent of the time it was holding back.
@@ -99,3 +103,20 @@ class History:
 
     def to_saved(self):
         return {"fine": [list(b) for b in self.fine.buckets], "coarse": [list(b) for b in self.coarse.buckets]}
+
+
+    def series(self, now, names):
+        """The last day as one average per 5-minute bucket, oldest first, for charts.
+
+        Returns the bucket start times in seconds and, per reading, a list with None
+        where that reading wasn't reported."""
+        minute = int(now // 60)
+        first = minute - minute % COARSE_MINUTES - (COARSE_BUCKETS - 1) * COARSE_MINUTES
+        buckets = [(start, sums) for start, sums in self.coarse.buckets if start >= first]
+        times = [start * 60 for start, _ in buckets]
+        values = {
+            name: [round(sums[name][0] / sums[name][1], 2) if name in sums and sums[name][1] else None
+                   for _, sums in buckets]
+            for name in names
+        }
+        return {"times": times, "values": values}

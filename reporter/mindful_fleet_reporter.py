@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.8"
+VERSION = "0.2.9"
 XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
 
@@ -150,6 +150,35 @@ def net_rates(before, after):
     seconds = after[2] - before[2]
     return (max(0, round((after[0] - before[0]) / seconds)),
             max(0, round((after[1] - before[1]) / seconds)))
+
+
+POWER_SENSOR_CHIPS = ("ina219", "ina220", "ina226", "ina230", "ina231", "ina260", "ina238")
+
+
+def read_power_sensors(root="/", labels=None):
+    """Extra power sensors the Linux kernel already knows about, such as an INA219 on a fan's supply line.
+
+    The kernel's driver reports bus voltage in millivolts, current in milliamps and power in microwatts."""
+    labels = labels or []
+    found = []
+    for folder in sorted(glob.glob(os.path.join(root, "sys/class/hwmon/hwmon*"))):
+        chip = (_read(folder, "name") or "").strip()
+        if chip not in POWER_SENSOR_CHIPS:
+            continue
+
+        def value(name, scale):
+            raw = _read(folder, name)
+            try:
+                return round(int(raw.strip()) / scale, 3)
+            except (AttributeError, ValueError):
+                return None
+        volts, amps, watts = value("in1_input", 1000), value("curr1_input", 1000), value("power1_input", 1_000_000)
+        if watts is None and volts is not None and amps is not None:
+            watts = round(volts * amps, 3)
+        index = len(found)
+        found.append({"label": labels[index] if index < len(labels) else f"Power sensor {index + 1}",
+                      "chip": chip, "volts": volts, "amps": amps, "watts": watts})
+    return found[:8]
 
 
 def read_wifi_dbm(root="/"):
@@ -425,6 +454,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "core_volts": read_core_volts(run),
         **read_xmrig(xmrig_url, xmrig_token),
         "wifi_dbm": read_wifi_dbm(root),
+        "sensors": read_power_sensors(root, [l.strip() for l in os.environ.get("MINDFUL_FLEET_SENSOR_LABELS", "").split(",") if l.strip()]),
         "disk_read_bps": disk_in,
         "disk_write_bps": disk_out,
         "top_process": top_name,

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.9 (2026-11-10)
+
+- An Expand all / Collapse all button next to the Look menu opens every card's full readings in the Wide and Gauges looks.
+- A 24-hour chart on each card, from 5-minute averages: temperature, hashrate, power use, CPU, fan, memory, clock speed, or power sensor. Hover to see a value and its time.
+- Extra power sensors: INA219, INA226, INA260 and similar chips that Linux already reads show their volts, amps, and watts. Name them with MINDFUL_FLEET_SENSOR_LABELS in the reporter's settings, such as "Fan supply".
+- Updating a computer now keeps any extra lines in its reporter settings, such as sensor names or the XMRig address.
+
 ## 0.2.8 (2026-11-10)
 
 - The header has two columns: the headline and fleet totals on the left, and a settings panel on the right that can be folded away.

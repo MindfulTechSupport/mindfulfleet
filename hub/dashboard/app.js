@@ -13,7 +13,8 @@ const ROWS = [
   ["trend", "Temperature trend"], ["fan", "Fan"], ["speed", "Speed"], ["power", "Power and voltage"],
   ["mining", "Mining"], ["watts", "Power use"], ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
-  ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["averages", "Averages"],
+  ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["sensor", "Power sensors"],
+  ["history", "24-hour chart"], ["averages", "Averages"],
   ["uptime", "Running for"], ["system", "System"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
@@ -23,7 +24,21 @@ let layoutSaveTimer = null;
 
 const LOOKS = [["tall", "Tall"], ["wide", "Wide"], ["gauges", "Gauges"]];
 const POWER_SCALE_WATTS = 12; // About the most a busy Pi 5 board draws, so the dial has room.
-const expanded = new Set(); // Cards with "All readings" open, in this browser only.
+const expanded = new Set(); // Cards opened one by one, in this browser only.
+const collapsed = new Set(); // Cards closed one by one while "Expand all" is on.
+const HISTORY_REFRESH_MS = 60000;
+const HISTORY_METRICS = [
+  ["temp", "Temperature", "°C", (v) => v.toFixed(1)],
+  ["hashrate", "Hashrate", "H/s", (v) => Math.round(v).toLocaleString()],
+  ["watts", "Power use", "W", (v) => v.toFixed(1)],
+  ["cpu", "CPU", "%", (v) => Math.round(v)],
+  ["fan", "Fan", "RPM", (v) => Math.round(v).toLocaleString()],
+  ["memory", "Memory", "%", (v) => Math.round(v)],
+  ["clock", "Clock", "GHz", (v) => (v / 1000).toFixed(2)],
+  ["sensor_watts", "Sensor", "W", (v) => v.toFixed(1)],
+];
+const historyCache = {}; // Per computer: { data, fetched, loading }.
+const chartChoice = {}; // Per computer: which reading its chart shows.
 const FULL_HEIGHT = 1250; // The slider's top end means "fit all", with no scrolling.
 
 const layout = loadLayout();
@@ -32,7 +47,7 @@ let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
+  const empty = { expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch (error) {
@@ -199,6 +214,7 @@ const AVERAGE_ROWS = [
   ["slowed", "Slowed %", (v) => Math.round(v)],
   ["watts", "Power W", (v) => v.toFixed(1)],
   ["hashrate", "Hashrate H/s", (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
+  ["sensor_watts", "Sensor W", (v) => v.toFixed(1)],
   ["fan", "Fan RPM", (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v))],
   ["memory", "Memory %", (v) => Math.round(v)],
   ["volts", "Input V", (v) => v.toFixed(2)],
@@ -214,7 +230,8 @@ function averagesTable(pi) {
   if (!data || !data["5m"]) return null;
   const cores = pi.cpu_per_core.length;
   const now = {
-    watts: pi.board_watts, hashrate: pi.hashrate, slowed: pi.throttled == null ? null : (pi.throttled & 0b1110 ? 100 : 0),
+    watts: pi.board_watts, hashrate: pi.hashrate,
+    sensor_watts: pi.sensors && pi.sensors.length ? pi.sensors.reduce((sum, x) => sum + (x.watts || 0), 0) : null, slowed: pi.throttled == null ? null : (pi.throttled & 0b1110 ? 100 : 0),
     cpu: pi.health.cpu.average, clock: average(pi.cpu_mhz), load: pi.load_avg[0], temp: pi.temp_c,
     fan: pi.fan_rpm, memory: pi.health.memory.percent, volts: pi.input_volts, net_in: pi.net_rx_bps,
     net_out: pi.net_tx_bps, disk_read: pi.disk_read_bps, disk_write: pi.disk_write_bps, wifi: pi.wifi_dbm,
@@ -456,6 +473,11 @@ function readings(pi) {
     const strength = Math.max(0, Math.min(100, (pi.wifi_dbm + 90) / 60 * 100));
     row("wifi", "Wi-Fi", meter(strength, pi.wifi_dbm < -75 ? "warn" : "", `${pi.wifi_dbm} dBm`, `${wifiWords(pi.wifi_dbm)} signal`, "Closer to 0 dBm is stronger. -90 dBm is barely usable"));
   }
+  for (const sensor of pi.sensors || []) {
+    const parts = [sensor.volts != null && `${sensor.volts.toFixed(2)} V`, sensor.amps != null && `${sensor.amps.toFixed(2)} A`].filter(Boolean);
+    row("sensor", sensor.label, text({ level: "", text: sensor.watts != null ? `${sensor.watts.toFixed(1)} W` : parts.join(", ") || "No reading" },
+      [sensor.watts != null && parts.join(", "), sensor.chip && `${sensor.chip.toUpperCase()} sensor`].filter(Boolean).join(", ")));
+  }
   if (pi.net_rx_bps != null) {
     row("network", "Network", text({ level: "", text: `↓ ${rate(pi.net_rx_bps)}  ↑ ${rate(pi.net_tx_bps)}` }, "in and out"));
   }
@@ -470,6 +492,7 @@ function readings(pi) {
   }
   const parts = [facts];
   if (pi.cpu_per_core.length && shown("cores")) parts.push(coreGrid(pi));
+  if (shown("history")) parts.push(historyChart(pi));
   if (shown("averages")) {
     const table = averagesTable(pi);
     if (table) parts.push(table);
@@ -478,14 +501,129 @@ function readings(pi) {
 
 }
 
+function isOpen(id) {
+  return layout.expandAll ? !collapsed.has(id) : expanded.has(id);
+}
+
+function loadHistory(pi) {
+  const cached = historyCache[pi.id];
+  if (cached && (cached.loading || Date.now() - cached.fetched < HISTORY_REFRESH_MS)) return;
+  historyCache[pi.id] = { ...(cached || {}), loading: true };
+  fetch(`/api/history?id=${encodeURIComponent(pi.id)}`, { cache: "no-store" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => {
+      historyCache[pi.id] = { data, fetched: Date.now(), loading: false };
+      if (!busyEditing()) render();
+    })
+    .catch(() => { historyCache[pi.id] = { ...(historyCache[pi.id] || {}), fetched: Date.now(), loading: false }; });
+}
+
+function clockTime(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/* One reading over the last 24 hours, as 5-minute averages from the hub. */
+function historyChart(pi) {
+  loadHistory(pi);
+  const wrap = el("div", "history");
+  const data = historyCache[pi.id] && historyCache[pi.id].data;
+  const available = HISTORY_METRICS.filter(([key]) => data && data.values[key] && data.values[key].some((v) => v != null));
+  let choice = chartChoice[pi.id] || "temp";
+  if (available.length && !available.some(([key]) => key === choice)) choice = available[0][0];
+
+  const head = el("div", "history-head");
+  head.appendChild(el("strong", "", "Last 24 hours"));
+  const select = el("select");
+  select.setAttribute("aria-label", `Reading to chart for ${pi.hostname}`);
+  for (const [key, label] of available) {
+    const option = el("option", "", label);
+    option.value = key;
+    select.appendChild(option);
+  }
+  select.value = choice;
+  select.addEventListener("change", () => {
+    chartChoice[pi.id] = select.value;
+    select.blur();
+    render();
+  });
+  if (available.length) head.appendChild(select);
+  wrap.appendChild(head);
+
+  const [, label, unit, format] = HISTORY_METRICS.find(([key]) => key === choice);
+  const values = data ? data.values[choice] || [] : [];
+  const points = data ? data.times.map((t, i) => [t, values[i]]).filter(([, v]) => v != null) : [];
+  if (points.length < 2) {
+    wrap.appendChild(el("p", "history-empty", data ? "Not enough history yet. Check back in 10 minutes." : "Loading history…"));
+    return wrap;
+  }
+
+  const W = 300;
+  const H = 110;
+  const pad = { left: 4, right: 4, top: 8, bottom: 8 };
+  const times = data.times;
+  const t0 = times[0];
+  const t1 = Math.max(times[times.length - 1], t0 + 1);
+  let low = Math.min(...points.map(([, v]) => v));
+  let high = Math.max(...points.map(([, v]) => v));
+  if (high - low < 1e-9) { high += 1; low -= 1; }
+  const x = (t) => pad.left + (t - t0) / (t1 - t0) * (W - pad.left - pad.right);
+  const y = (v) => H - pad.bottom - (v - low) / (high - low) * (H - pad.top - pad.bottom);
+
+  const plot = el("div", "history-plot");
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img",
+    "aria-label": `${label} over the last 24 hours, from ${format(low)} to ${format(high)} ${unit}` });
+  for (const v of [high, (high + low) / 2, low]) svg("line", { x1: 0, x2: W, y1: y(v), y2: y(v), class: "history-grid" }, root);
+  // Gaps in reporting break the line rather than drawing across them.
+  let run = [];
+  const runs = [run];
+  times.forEach((t, i) => {
+    if (values[i] == null) { run = []; runs.push(run); } else run.push(`${x(t).toFixed(1)},${y(values[i]).toFixed(1)}`);
+  });
+  for (const r of runs) if (r.length > 1) svg("polyline", { points: r.join(" "), class: "history-line" }, root);
+  const dot = svg("circle", { r: 3.5, class: "history-dot", visibility: "hidden" }, root);
+  const cross = svg("line", { y1: 0, y2: H, class: "history-cross", visibility: "hidden" }, root);
+  plot.appendChild(root);
+
+  const axis = el("div", "history-y");
+  axis.append(el("span", "", `${format(high)} ${unit}`), el("span", "", `${format(low)} ${unit}`));
+  const tip = el("div", "history-tip");
+  tip.hidden = true;
+  plot.append(axis, tip);
+
+  // Hovering shows the nearest 5-minute average and its time.
+  root.addEventListener("pointermove", (event) => {
+    const box = root.getBoundingClientRect();
+    const t = t0 + (event.clientX - box.left) / box.width * (t1 - t0);
+    let best = points[0];
+    for (const point of points) if (Math.abs(point[0] - t) < Math.abs(best[0] - t)) best = point;
+    const px = x(best[0]);
+    dot.setAttribute("cx", px); dot.setAttribute("cy", y(best[1])); dot.setAttribute("visibility", "visible");
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+    tip.textContent = `${format(best[1])} ${unit} at ${clockTime(best[0])}`;
+    tip.style.left = `${Math.min(Math.max(px / W * 100, 15), 85)}%`;
+    tip.hidden = false;
+  });
+  root.addEventListener("pointerleave", () => {
+    dot.setAttribute("visibility", "hidden");
+    cross.setAttribute("visibility", "hidden");
+    tip.hidden = true;
+  });
+  wrap.appendChild(plot);
+  const xAxis = el("div", "history-x");
+  xAxis.append(el("span", "", clockTime(t0)), el("span", "", "now"));
+  wrap.appendChild(xAxis);
+  return wrap;
+}
+
 function detailsToggle(pi, container) {
-  const open = expanded.has(pi.id);
+  const open = isOpen(pi.id);
   const button = el("button", "details-toggle", open ? "Hide readings" : "All readings");
   button.type = "button";
   button.setAttribute("aria-expanded", String(open));
   button.addEventListener("click", () => {
-    if (expanded.has(pi.id)) expanded.delete(pi.id);
-    else expanded.add(pi.id);
+    const set = layout.expandAll ? collapsed : expanded;
+    if (set.has(pi.id)) set.delete(pi.id);
+    else set.add(pi.id);
     render();
   });
   container.appendChild(button);
@@ -812,6 +950,11 @@ function showFleetPower() {
     const total = powered.reduce((sum, pi) => sum + pi.board_watts, 0);
     parts.push(`Fleet power: ${total.toFixed(1)} W across ${powered.length} computer${powered.length === 1 ? "" : "s"}, ${energy(total)}. Measured by each board, not counting fans or USB devices.`);
   }
+  const sensed = online.flatMap((pi) => pi.sensors || []).filter((s) => s.watts != null);
+  if (sensed.length) {
+    const extra = sensed.reduce((sum, s) => sum + s.watts, 0);
+    parts.push(`Power sensors: ${extra.toFixed(1)} W more from ${sensed.length} sensor${sensed.length === 1 ? "" : "s"}.`);
+  }
   line.hidden = !parts.length;
   line.textContent = parts.join(" ");
 }
@@ -943,6 +1086,22 @@ function setUpTools() {
   look.addEventListener("change", () => {
     layout.look = look.value;
     saveLayout();
+    showExpandAll();
+    render();
+  });
+  const expandAll = document.getElementById("expand-all");
+  const showExpandAll = () => {
+    expandAll.hidden = layout.look === "tall";
+    expandAll.textContent = layout.expandAll ? "Collapse all" : "Expand all";
+    expandAll.setAttribute("aria-pressed", String(!!layout.expandAll));
+  };
+  showExpandAll();
+  expandAll.addEventListener("click", () => {
+    layout.expandAll = !layout.expandAll;
+    expanded.clear();
+    collapsed.clear();
+    saveLayout();
+    showExpandAll();
     render();
   });
   const price = document.getElementById("price");
