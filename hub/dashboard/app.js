@@ -50,7 +50,7 @@ function loadLayout() {
   const empty = { expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
-  } catch (error) {
+  } catch {
     return empty;
   }
 }
@@ -62,7 +62,7 @@ function shown(key) {
 function saveLayout() {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
-  } catch (error) {
+  } catch {
     // Private windows can refuse storage. The layout still works until the page closes.
   }
 }
@@ -830,7 +830,7 @@ async function loadSharedLayout() {
     if (!shared || !Array.isArray(shared.order)) return;
     for (const key of SHARED_KEYS) if (shared[key]) layout[key] = shared[key];
     saveLayout();
-  } catch (error) {
+  } catch {
     // Keep this browser's own layout.
   }
 }
@@ -1014,7 +1014,7 @@ async function refresh() {
 
     document.title = pis.some((pi) => pi.health.status !== "ok") ? "⚠ Mindful Fleet" : "Mindful Fleet";
     if (!busyEditing()) render();
-  } catch (error) {
+  } catch {
     connection.textContent = "Can't reach the hub. These numbers may be out of date. Retrying every 5 seconds.";
     connection.hidden = false;
   }

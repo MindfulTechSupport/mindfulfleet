@@ -1,0 +1,120 @@
+# The code checker. Runs on every change pushed to GitHub, on every pull request, and every Monday (the
+# weekly health check). The `release` branch, which every installed Pi updates from, is only moved to a
+# version after every check here has passed on `main`, and only with Ed's OK.
+#
+# Every action is pinned to the exact commit of its release (a tag can be moved by its owner); the comment
+# says which version it is, and Dependabot proposes the new commit when a release comes out.
+name: Code checker
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 13 * * 1" # Mondays, 6:17 in Colorado: weekly health check
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release' }}
+
+jobs:
+  tests:
+    name: Tests - Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Python each Raspberry Pi OS ships: 12 (Bookworm) and 13 (Trixie).
+          - { python: "3.11", os: "Bookworm", image: "python:3.11-slim-bookworm" }
+          - { python: "3.13", os: "Trixie", image: "python:3.13-slim-trixie" }
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Every test (standard library only, like the Pis)
+        run: python3 -B -m unittest discover -s tests -v
+
+  style:
+    name: Style and mistakes - Python, shell scripts, dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Python mistakes and security patterns (Ruff, rules in ruff.toml)
+        if: ${{ always() }}
+        run: pipx run ruff==0.16.9 check --output-format github .
+      - name: Shell scripts (ShellCheck)
+        if: ${{ always() }}
+        run: shellcheck --version && shellcheck --severity=warning install.sh install/*.sh install/mindful-fleet
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ always() }}
+        with:
+          node-version: "24"
+      - name: Dashboard mistakes and safety (ESLint, rules in eslint.config.mjs)
+        if: ${{ always() }}
+        run: npx --yes eslint@10.1.0 hub/dashboard
+
+  secrets:
+    name: Security - leaked passwords and keys (Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the whole history: a password removed later is still leaked
+      - name: Leaked passwords and keys (Gitleaks)
+        run: |
+          V=8.30.1
+          curl -fsSL --retry 4 --retry-all-errors --retry-delay 5 -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
+          tar xzf gitleaks.tgz gitleaks
+          mkdir -p reports
+          ./gitleaks git --redact --no-banner -v --report-format json --report-path reports/gitleaks.json .
+      - name: List the findings
+        if: ${{ always() }}
+        run: sh scripts/print-reports.sh reports
+      - name: Keep the detailed reports
+        if: ${{ always() }}
+        continue-on-error: true # the reports are in the log too: a storage hiccup never fails the check
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: report-gitleaks
+          path: reports/
+          retention-days: 90
+          if-no-files-found: ignore
+
+  attack-patterns:
+    name: Security - attack patterns (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep:1.183.0 # pinned to a known version; update by hand
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Scan the hub, reporter, installers and dashboard
+        run: >-
+          mkdir -p reports &&
+          semgrep scan --error --metrics off
+          --config p/python --config p/javascript
+          --text --json-output=reports/semgrep-scan.json
+          .
+      - name: List the findings
+        if: ${{ always() }}
+        run: |
+          python3 scripts/checker-summary.py semgrep reports/semgrep-scan.json | tee -a "$GITHUB_STEP_SUMMARY" || true
+          sh scripts/print-reports.sh reports
+      - name: Keep the detailed reports
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: report-semgrep
+          path: reports/
+          retention-days: 90
+          if-no-files-found: ignore

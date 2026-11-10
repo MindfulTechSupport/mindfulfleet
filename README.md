@@ -130,6 +130,8 @@ To drop one retired computer from the dashboard, stop the hub, remove that compu
 
 ## Run the tests
 
+The code checker on GitHub runs these tests and the style and security checkers on every change; see `docs/CHECKER_LOG.md`. To run the tests yourself:
+
 ```
 python3 -m unittest discover -s tests
 ```

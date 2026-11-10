@@ -1,0 +1,13 @@
+# The code checker's Python rules (job "Python - tests and style"). Every finding is fixed or explained
+# in docs/CHECKER_LOG.md. E/W/F: mistakes and unused code. B: likely bugs. S: security patterns (Bandit).
+target-version = "py311" # Raspberry Pi OS 12 (Bookworm) ships Python 3.11
+line-length = 140
+
+[lint]
+select = ["E", "W", "F", "B", "S", "PLE"]
+
+[lint.per-file-ignores]
+# The hub's random numbers only make up demo data (--demo); tokens come from the installer's openssl.
+"hub/mindful_fleet_hub.py" = ["S311"]
+# Tests use assert, temporary files, fake tokens and local test servers on purpose.
+"tests/*" = ["S101", "S105", "S106", "S107", "S108", "S310", "S603", "S607"]

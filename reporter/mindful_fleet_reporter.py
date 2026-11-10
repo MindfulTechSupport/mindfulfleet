@@ -166,7 +166,7 @@ def read_power_sensors(root="/", labels=None):
         if chip not in POWER_SENSOR_CHIPS:
             continue
 
-        def value(name, scale):
+        def value(name, scale, folder=folder):
             raw = _read(folder, name)
             try:
                 return round(int(raw.strip()) / scale, 3)
@@ -246,19 +246,30 @@ def busiest_process(before, after, ticks_per_second=None):
     return best_name, round(100 * best_ticks / ticks_per_second / (after[1] - before[1]), 1)
 
 
+def is_web_address(url):
+    """True for an http:// or https:// address. Settings never get to open files or other schemes."""
+    parsed = urllib.parse.urlparse(url or "")
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def sensor_labels():
+    """Names for power sensors, from MINDFUL_FLEET_SENSOR_LABELS, comma-separated."""
+    return [name.strip() for name in os.environ.get("MINDFUL_FLEET_SENSOR_LABELS", "").split(",") if name.strip()]
+
+
 def read_xmrig(url, token=None, timeout=2):
     """Mining numbers from XMRig's built-in web API, which it serves only on this computer.
 
     Read-only: the API is turned on in "restricted" mode, so it can't change the miner.
     Nothing here is sent anywhere except to the hub, and the wallet address isn't read.
     """
-    if not url or url == "off":
+    if not url or url == "off" or not is_web_address(url):
         return {}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def get(path):
-        request = urllib.request.Request(url.rstrip("/") + path, headers=headers)
+        request = urllib.request.Request(url.rstrip("/") + path, headers=headers)  # noqa: S310 - checked by is_web_address
         with opener.open(request, timeout=timeout) as response:
             return json.loads(response.read(500_000))
 
@@ -269,7 +280,10 @@ def read_xmrig(url, token=None, timeout=2):
     if not isinstance(summary, dict):
         return {}
     rates = (summary.get("hashrate") or {}).get("total") or []
-    rate = lambda i: rates[i] if len(rates) > i and isinstance(rates[i], (int, float)) else None
+
+    def rate(i):
+        return rates[i] if len(rates) > i and isinstance(rates[i], (int, float)) else None
+
     results = summary.get("results") or {}
     connection = summary.get("connection") or {}
     found = {
@@ -454,7 +468,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "core_volts": read_core_volts(run),
         **read_xmrig(xmrig_url, xmrig_token),
         "wifi_dbm": read_wifi_dbm(root),
-        "sensors": read_power_sensors(root, [l.strip() for l in os.environ.get("MINDFUL_FLEET_SENSOR_LABELS", "").split(",") if l.strip()]),
+        "sensors": read_power_sensors(root, sensor_labels()),
         "disk_read_bps": disk_in,
         "disk_write_bps": disk_out,
         "top_process": top_name,
@@ -465,13 +479,13 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
 
 
 def send(hub_url, token, report, timeout=10):
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310 - main checks the hub address is http(s)
         hub_url.rstrip("/") + "/api/report",
         data=json.dumps(report).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - main checks the hub address is http(s)
         return response.status
 
 
@@ -490,9 +504,14 @@ def main(argv=None):
 
     if not args.print_only and (not args.hub or not token):
         parser.error("needs --hub (or MINDFUL_FLEET_HUB) and the MINDFUL_FLEET_TOKEN environment variable")
+    if args.hub and not is_web_address(args.hub):
+        parser.error("the hub address must start with http:// or https://")
 
     device = root_device()
-    sample = lambda: (read_cpu_times(), read_net_bytes(), read_disk_bytes(device), read_process_ticks())
+
+    def sample():
+        return read_cpu_times(), read_net_bytes(), read_disk_bytes(device), read_process_ticks()
+
     previous = sample()
     time.sleep(1)
     failing = False

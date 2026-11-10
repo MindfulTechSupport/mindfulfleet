@@ -102,7 +102,7 @@ def set_reporter(port, token):
         lines.append(f"MINDFUL_FLEET_XMRIG_TOKEN={token}")
     with open(REPORTER_ENV, "w") as f:
         f.write("\n".join(lines) + "\n")
-    subprocess.run(["systemctl", "restart", "mindful-fleet-reporter"], check=False)
+    subprocess.run(["systemctl", "restart", "mindful-fleet-reporter"], check=False)  # noqa: S603, S607 - fixed systemctl command
 
 
 def check(port, token):
@@ -177,13 +177,13 @@ def main():
         with open(dropin, "w") as f:
             f.write(f"# Added by Mindful Fleet. Delete this file and restart {miner['service']} to undo.\n"
                     f"[Service]\nExecStart=\nExecStart={command}\n")
-        subprocess.run(["systemctl", "daemon-reload"], check=False)
+        subprocess.run(["systemctl", "daemon-reload"], check=False)  # noqa: S603, S607 - fixed systemctl command
         say(f"Saved. To undo, delete {dropin} and restart {miner['service']}.")
         token = None
 
     if miner["service"]:
         say(f"Restarting {miner['service']}…")
-        subprocess.run(["systemctl", "restart", miner["service"]], check=False)
+        subprocess.run(["systemctl", "restart", miner["service"]], check=False)  # noqa: S603, S607 - fixed systemctl command
     else:
         say("XMRig isn't running as a service, so please restart it yourself now.")
     set_reporter(PORT, token)

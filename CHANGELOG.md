@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A code checker on GitHub runs on every change and every Monday: the tests on Python 3.11 and 3.13, Ruff, ShellCheck, ESLint, Gitleaks and Semgrep. Findings and what was done about each are in `docs/CHECKER_LOG.md`.
+- The reporter accepts only http:// or https:// addresses for the hub and XMRig.
+
 ## 0.2.9 (2026-11-10)
 
 - An Expand all / Collapse all button next to the Look menu opens every card's full readings in the Wide and Gauges looks.

@@ -242,6 +242,13 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual(found[0], {"label": "Fan supply", "chip": "ina219", "volts": 12.02, "amps": 0.41, "watts": 4.93})
         self.assertEqual((found[1]["label"], found[1]["watts"]), ("Power sensor 2", 1.0))
 
+    def test_only_web_addresses(self):
+        self.assertTrue(reporter.is_web_address("http://192.0.2.10:8742"))
+        self.assertTrue(reporter.is_web_address("https://hub.example"))
+        for bad in ("file:///etc/passwd", "ftp://x", "192.0.2.10:8742", "", None, "http://"):
+            self.assertFalse(reporter.is_web_address(bad), bad)
+        self.assertEqual(reporter.read_xmrig("file:///etc/passwd"), {})
+
     def test_core_volts(self):
         class Result:
             returncode = 0

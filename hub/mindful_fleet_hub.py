@@ -328,7 +328,7 @@ def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
     """Ask GitHub which version is on the release line, so cards can say when an update is waiting."""
     while True:
         try:
-            with urllib.request.urlopen(url, timeout=15) as response:
+            with urllib.request.urlopen(url, timeout=15) as response:  # noqa: S310 - fixed https address
                 text = response.read(32).decode().strip()
             if _VERSION_RE.match(text):
                 fleet.latest_version = text
@@ -472,7 +472,8 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "disk_write_bps": random.randint(2000, 30000),
         **({"hashrate": round(sum(cpu) * 3.1 * random.uniform(0.97, 1.03), 1),
             "hashrate_15m": round(sum(cpu) * 3.1, 1), "mining_threads": sum(1 for c in cpu if c > 50),
-            "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:20004", "pool_tls": "TLSv1.3", "rig_id": "rig01", "algo": "rx/0",
+            "shares_good": 1840, "shares_total": 1843, "pool": "pool.example.com:20004", "pool_tls": "TLSv1.3",
+            "rig_id": "rig01", "algo": "rx/0",
             "miner_version": "6.24.0"} if cpu and sum(cpu) > 250 else {}),
         "sensors": [{"label": "Fan supply", "chip": "ina219", "volts": round(12.02 + random.uniform(-0.03, 0.03), 2),
                      "amps": round(0.41 + random.uniform(-0.02, 0.02), 3), "watts": round(4.93 + random.uniform(-0.2, 0.2), 2)}]
@@ -511,7 +512,7 @@ def run_demo(fleet, stop):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the Mindful Fleet hub and dashboard.")
-    parser.add_argument("--host", default=os.environ.get("MINDFUL_FLEET_HOST", "0.0.0.0"))
+    parser.add_argument("--host", default=os.environ.get("MINDFUL_FLEET_HOST", "0.0.0.0"))  # noqa: S104 - the Pis on the network report to it
     parser.add_argument("--port", type=int, default=int(os.environ.get("MINDFUL_FLEET_PORT", DEFAULT_PORT)))
     parser.add_argument("--state", default=os.environ.get("MINDFUL_FLEET_STATE"),
                         help="file that remembers your Pis between restarts")

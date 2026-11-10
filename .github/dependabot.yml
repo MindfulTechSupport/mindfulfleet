@@ -1,0 +1,13 @@
+# Weekly health report: every Monday GitHub checks the actions the code checker uses for new versions and
+# security fixes, and opens a pull request for each one. The checker runs on every such pull request.
+# (The hub and reporter use Python's standard library only, so there are no libraries to watch.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: America/Denver
+    cooldown:
+      default-days: 7 # a new release waits a week before we're offered it (a bad release is usually pulled by then)
