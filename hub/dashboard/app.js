@@ -705,11 +705,17 @@ function stepButton(input, direction, title) {
   node.title = title;
   node.setAttribute("aria-label", title);
   let repeat = null;
-  const step = () => {
+  let held = 0;
+  const step = (size = 1) => {
     const before = input.value;
-    if (direction < 0) input.stepDown();
-    else input.stepUp();
+    if (direction < 0) input.stepDown(size);
+    else input.stepUp(size);
     if (input.value !== before) input.dispatchEvent(new Event("input"));
+  };
+  // The longer it's held, the faster it goes: single steps first, then 5 and 20 at a time.
+  const keepGoing = () => {
+    held += 1;
+    step(held > 40 ? 20 : held > 15 ? 5 : 1);
   };
   const stop = () => {
     clearTimeout(repeat);
@@ -719,8 +725,9 @@ function stepButton(input, direction, title) {
   // Holding the button keeps it moving, after a short pause so a single click stays a single step.
   node.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    held = 0;
     step();
-    repeat = setTimeout(() => { repeat = setInterval(step, 70); }, 400);
+    repeat = setTimeout(() => { repeat = setInterval(keepGoing, 70); }, 400);
   });
   for (const type of ["pointerup", "pointerleave", "pointercancel"]) node.addEventListener(type, stop);
   node.addEventListener("click", (event) => {

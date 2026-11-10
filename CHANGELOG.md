@@ -3,7 +3,7 @@
 ## 0.2.6 (2026-11-10)
 
 - Electricity price takes three decimal places, and small daily costs show to a tenth of a cent.
-- − and + buttons on each slider, in finer steps: width by 5 pixels, text by 2%, height by 25 pixels. Holding a button keeps it moving.
+- − and + buttons on each slider. Each click moves 1 pixel or 1%. Holding a button keeps it moving, faster the longer it's held.
 - The Pool row says whether the link to the pool is encrypted, shows the rig ID, and warns when two computers share a rig ID, since the pool can't tell them apart.
 
 ## 0.2.5 (2026-11-10)
