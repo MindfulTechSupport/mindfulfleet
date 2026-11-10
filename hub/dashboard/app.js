@@ -699,6 +699,36 @@ async function refresh() {
   }
 }
 
+function stepButton(input, direction, title) {
+  const node = el("button", "step", direction < 0 ? "−" : "+");
+  node.type = "button";
+  node.title = title;
+  node.setAttribute("aria-label", title);
+  let repeat = null;
+  const step = () => {
+    const before = input.value;
+    if (direction < 0) input.stepDown();
+    else input.stepUp();
+    if (input.value !== before) input.dispatchEvent(new Event("input"));
+  };
+  const stop = () => {
+    clearTimeout(repeat);
+    clearInterval(repeat);
+    repeat = null;
+  };
+  // Holding the button keeps it moving, after a short pause so a single click stays a single step.
+  node.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    step();
+    repeat = setTimeout(() => { repeat = setInterval(step, 70); }, 400);
+  });
+  for (const type of ["pointerup", "pointerleave", "pointercancel"]) node.addEventListener(type, stop);
+  node.addEventListener("click", (event) => {
+    if (event.detail === 0) step(); // Keyboard Enter or Space.
+  });
+  return node;
+}
+
 function setUpRowPicker() {
   const list = document.getElementById("row-list");
   for (const [key, label] of ROWS) {
@@ -742,6 +772,9 @@ function setUpTools() {
       saveLayout();
       render();
     });
+    const name = input.parentElement.firstChild.textContent.trim().toLowerCase();
+    input.before(stepButton(input, -1, `Make ${name} smaller`));
+    input.after(stepButton(input, 1, `Make ${name} bigger`));
   }
 
   const toggle = document.getElementById("arrange");
