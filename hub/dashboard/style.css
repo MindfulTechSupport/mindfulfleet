@@ -98,12 +98,21 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .facts dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .facts dd.warn { color: var(--warn); }
 .facts dd.bad { color: var(--bad); }
-.meter { display: flex; align-items: center; gap: 10px; }
+.meter { display: block; }
+.meter-line { display: flex; align-items: center; gap: 10px; }
 .bar { flex: 1; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
 .fill { height: 100%; border-radius: 5px; background: var(--neutral); }
 .fill.warn { background: var(--warn-body); }
 .fill.bad { background: var(--bad); }
-.meter span { min-width: 3.4em; }
+.meter-line span { min-width: 4.4em; text-align: right; }
+.detail { display: block; color: var(--soft); font-size: .8rem; font-weight: 500; text-align: right; margin-top: 2px; }
+.pi-board { margin: 2px 0 0; font-weight: 700; font-size: .9rem; }
+.rows { position: relative; }
+.rows summary { cursor: pointer; font-weight: 700; padding: 6px 12px; border: 1.5px solid var(--track); border-radius: 10px; background: var(--card); list-style: none; min-height: 36px; display: flex; align-items: center; }
+.rows summary::-webkit-details-marker { display: none; }
+.row-list { position: absolute; z-index: 5; margin-top: 6px; background: var(--card); border: 1.5px solid var(--track); border-radius: 12px; padding: 10px 14px; display: grid; grid-template-columns: repeat(2, max-content); gap: 6px 18px; box-shadow: 0 8px 24px rgba(20, 22, 50, .25); }
+.row-choice { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.row-choice input { accent-color: var(--neutral); width: 18px; height: 18px; }
 .cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 8px; }
 .core { display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
 .core strong { font-size: .95rem; }
@@ -113,3 +122,8 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .stale { opacity: .8; }
 .foot { padding-top: 28px; padding-bottom: 32px; color: var(--soft); font-size: .8rem; }
 .foot p { margin: 0; max-width: 70ch; }
+@media (max-width: 520px) {
+  .rows { position: static; }
+  .row-list { left: 16px; right: 16px; grid-template-columns: 1fr 1fr; }
+  .row-choice { white-space: normal; }
+}

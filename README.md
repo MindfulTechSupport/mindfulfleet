@@ -21,24 +21,36 @@ Then open http://127.0.0.1:8742/
 On the computer that will run the dashboard, paste:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- hub
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- hub
 ```
 
 It prints the dashboard address and a ready-made line for adding computers. Paste that line on every computer you want to watch, including that one. Each one shows up within about 15 seconds.
 
-## Update it
+## Updates
 
-On each computer, paste:
+Each computer checks for a new version once a day, at a random time so a whole fleet doesn't restart at once, and updates itself. Only versions on the `release` branch are installed. Day-to-day work on `main` never reaches your computers.
+
+To control updates on a computer:
+
+| Command | What it does |
+|---|---|
+| `mindful-fleet status` | Shows the installed version, the latest version, and the update setting |
+| `sudo mindful-fleet update` | Updates now |
+| `sudo mindful-fleet hold` | Stops automatic updates, so this computer stays on its current version |
+| `sudo mindful-fleet skip` | Skips the latest version, and takes the next one after it |
+| `sudo mindful-fleet resume` | Turns automatic updates back on and clears any skip |
+
+Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- update
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- update
 ```
 
-It updates whatever is installed there and keeps your settings. Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
+Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
 
 ## Arrange your dashboard
 
-Use the **Card size** slider to fit your screen. **Arrange cards** lets you drag cards into your own order and create groups. Your layout is saved in that browser, so another computer or browser starts with the default layout.
+Use the **Card size** slider to fit your screen, and **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your layout is saved in that browser, so another computer or browser starts with the default layout.
 
 ## What the colors mean
 
@@ -59,7 +71,8 @@ CPU load never changes the color, because some computers, such as miners, are me
 
 - USB fans can't report their speed, so they show "Not reported".
 - A fan's "Fan effort" and the "Voltage" row only appear on boards that report them. Voltage needs a Pi 5.
-- Your card layout lives in one browser.
+- Your card layout and row choices live in one browser.
+- Updates are held or skipped per computer, not from the dashboard yet.
 
 ## Security
 

@@ -15,6 +15,10 @@
       <label class="size">Card size
         <input id="size" type="range" min="50" max="130" step="5" value="100">
       </label>
+      <details class="rows">
+        <summary>Choose what cards show</summary>
+        <div id="row-list" class="row-list"></div>
+      </details>
       <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
       <form id="new-group" class="new-group" hidden>
         <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">

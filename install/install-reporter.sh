@@ -59,6 +59,7 @@ PrivateTmp=yes
 WantedBy=multi-user.target
 EOF
 
+bash "$SOURCE/install/install-updater.sh"
 systemctl daemon-reload
 systemctl enable mindful-fleet-reporter >/dev/null
 systemctl restart mindful-fleet-reporter

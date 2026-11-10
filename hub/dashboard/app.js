@@ -9,18 +9,29 @@ const LOW_VOLTS = 4.63;
 const HIGH_VOLTS = 5.25;
 const NOMINAL_VOLTS = 5;
 
+const ROWS = [
+  ["trend", "Temperature trend"], ["fan", "Fan"], ["speed", "Speed"], ["power", "Power and voltage"],
+  ["cpu", "CPU"], ["clock", "Clock speed"], ["load", "Load"], ["cores", "Each core"],
+  ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"], ["network", "Network"],
+  ["uptime", "Running for"], ["system", "System"],
+];
+
 const layout = loadLayout();
 let arranging = false;
 let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { size: 100, order: [], groups: [], members: {} };
+  const empty = { size: 100, order: [], groups: [], members: {}, hidden: [] };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch (error) {
     return empty;
   }
+}
+
+function shown(key) {
+  return !layout.hidden.includes(key);
 }
 
 function saveLayout() {
@@ -95,6 +106,7 @@ function sparkline(history) {
 function bytes(value) {
   if (value == null) return "";
   const gb = value / 1024 ** 3;
+  if (gb < 1) return `${Math.round(value / 1024 ** 2)} MB`;
   return gb >= 100 ? `${gb.toFixed(0)} GB` : `${gb.toFixed(1)} GB`;
 }
 
@@ -108,33 +120,68 @@ function duration(seconds) {
   return `${minutes} min`;
 }
 
-function meter(percent, level, label, title) {
+function rate(bytesPerSecond) {
+  if (bytesPerSecond == null) return "—";
+  if (bytesPerSecond >= 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`;
+  if (bytesPerSecond >= 1024) return `${Math.round(bytesPerSecond / 1024)} KB/s`;
+  return `${bytesPerSecond} B/s`;
+}
+
+function ghz(mhz) {
+  return `${(mhz / 1000).toFixed(2)} GHz`;
+}
+
+function average(values) {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+}
+
+function shortModel(model) {
+  return model ? model.replace(/ Model [A-Z]\b/, "").replace(/ Rev [\d.]+$/, "").trim() : null;
+}
+
+function boardMemory(pi) {
+  let mb = pi.board_ram_mb;
+  if (!mb && pi.mem_total) {
+    // Some memory is reserved for the system, so round up to the nearest board size.
+    const usable = pi.mem_total / 1024 ** 2;
+    mb = [512, 1024, 2048, 4096, 8192, 16384, 32768].find((size) => size >= usable * 0.98) || null;
+  }
+  if (!mb) return null;
+  return mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`;
+}
+
+function meter(percent, level, label, detail, title) {
   const wrap = el("dd", "meter");
   if (percent == null) {
     wrap.textContent = "No reading";
     return wrap;
   }
+  const line = el("div", "meter-line");
   const bar = el("div", "bar");
   const fill = el("div", `fill ${level || ""}`);
   fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
   bar.appendChild(fill);
+  line.append(bar, el("span", level || "", label));
+  wrap.appendChild(line);
+  if (detail) wrap.appendChild(el("small", "detail", detail));
   if (title) wrap.title = title;
-  wrap.append(bar, el("span", level || "", label));
   return wrap;
 }
 
 function coreGrid(pi) {
   const grid = el("div", "cores");
   pi.cpu_per_core.forEach((value, i) => {
-    const average = pi.core_average[i];
+    const avg = pi.core_average[i];
+    const mhz = pi.cpu_mhz[i];
     const cell = el("div", "core");
-    cell.title = `Core ${i + 1}: ${Math.round(value)}% now, ${average == null ? "no" : `${Math.round(average)}%`} average over 30 minutes`;
+    cell.title = `Core ${i + 1}: ${Math.round(value)}% now, ${avg == null ? "no" : `${Math.round(avg)}%`} average over 30 minutes`;
     const column = el("div", "core-bar");
     const level = el("i");
     level.style.height = `${value}%`;
     column.appendChild(level);
-    cell.append(column, el("strong", "", `${Math.round(value)}%`));
-    if (average != null) cell.appendChild(el("small", "", `avg ${Math.round(average)}%`));
+    cell.append(el("small", "", `Core ${i + 1}`), column, el("strong", "", `${Math.round(value)}%`));
+    if (avg != null) cell.appendChild(el("small", "", `avg ${Math.round(avg)}%`));
+    if (mhz != null) cell.appendChild(el("small", "", ghz(mhz)));
     grid.appendChild(cell);
   });
   return grid;
@@ -198,6 +245,8 @@ function card(pi, section) {
   const head = el("div", "pi-head");
   const title = el("div", "pi-title");
   title.append(el("h2", "", pi.hostname), el("p", "pi-mood", MOODS[h.status]));
+  const board = [shortModel(pi.model), boardMemory(pi)].filter(Boolean).join(", ");
+  if (board) title.appendChild(el("p", "pi-board", board));
   if (pi.ip) title.appendChild(el("p", "pi-where", pi.ip));
   head.append(mascot(h.status), title);
 
@@ -205,7 +254,8 @@ function card(pi, section) {
   if (arranging) body.appendChild(arrangeBar(pi, section));
   const heat = el("div", "heat");
   const temp = h.temp.value == null ? "—" : `${Math.round(h.temp.value)}°C`;
-  heat.append(el("div", `degrees ${h.temp.level}`, temp), sparkline(pi.history));
+  heat.append(el("div", `degrees ${h.temp.level}`, temp));
+  if (shown("trend")) heat.appendChild(sparkline(pi.history));
   body.appendChild(heat);
   if (!h.online) body.appendChild(el("p", "heat-note", "Last known numbers"));
 
@@ -216,26 +266,52 @@ function card(pi, section) {
   }
 
   const facts = el("dl", "facts");
-  const row = (label, value) => facts.append(el("dt", "", label), value);
-  const text = (item) => el("dd", item.level, item.text);
+  const row = (key, label, value) => {
+    if (shown(key)) facts.append(el("dt", "", label), value);
+  };
+  const text = (item, detail) => {
+    const dd = el("dd", item.level, item.text);
+    if (detail) dd.appendChild(el("small", "detail", detail));
+    return dd;
+  };
+  const cores = h.cpu.total;
 
-  row("Fan", text(h.fan));
-  if (h.fan.percent != null) row("Fan effort", meter(h.fan.percent, h.fan.percent >= 100 ? "warn" : "", `${h.fan.percent}%`, "How hard the board is driving the fan"));
-  row("Speed", text(h.speed));
-  row("Power", text(h.power));
+  row("fan", "Fan", text(h.fan, pi.fan_max_rpm ? `fastest seen ${pi.fan_max_rpm.toLocaleString()} RPM` : ""));
+  if (h.fan.percent != null) row("fan", "Fan effort", meter(h.fan.percent, h.fan.percent >= 100 ? "warn" : "", `${h.fan.percent}%`, "of full power", "How hard the board is driving the fan"));
+  row("speed", "Speed", text(h.speed));
+  row("power", "Power", text(h.power));
   if (h.power.volts != null) {
     const position = (h.power.volts - LOW_VOLTS) / (HIGH_VOLTS - LOW_VOLTS) * 100;
-    row("Voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
+    row("power", "Input voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
   }
-  if (h.cpu.total) {
-    row("CPU", meter(h.cpu.average, "", `${Math.round(h.cpu.average)}%`));
-    row("Cores in use", el("dd", "", `${h.cpu.busy} of ${h.cpu.total}`));
+  if (pi.core_volts != null) row("power", "Core voltage", el("dd", "", `${pi.core_volts.toFixed(3)} V`));
+  if (cores) {
+    row("cpu", "CPU", meter(h.cpu.average, "", `${Math.round(h.cpu.average)}%`, `${h.cpu.busy} of ${cores} cores in use`));
   }
-  row("Memory", meter(h.memory.percent, h.memory.level, `${Math.round(h.memory.percent)}%`, `${bytes(pi.mem_used)} of ${bytes(pi.mem_total)}`));
-  row("Storage", meter(h.disk.percent, h.disk.level, `${Math.round(h.disk.percent)}%`, `${bytes(pi.disk_used)} of ${bytes(pi.disk_total)}`));
-  row("Running for", el("dd", "", duration(pi.uptime_s)));
+  const mhz = average(pi.cpu_mhz);
+  if (mhz != null && pi.cpu_max_mhz) {
+    row("clock", "Clock speed", meter(mhz / pi.cpu_max_mhz * 100, "", ghz(mhz), `of ${ghz(pi.cpu_max_mhz)} max`, "Average across cores"));
+  }
+  if (pi.load_avg.length && cores) {
+    const [one, five, fifteen] = pi.load_avg;
+    row("load", "Load", meter(one / cores * 100, "", one.toFixed(2), `of ${cores} cores, 5 and 15 min: ${five.toFixed(2)}, ${fifteen.toFixed(2)}`, "How many tasks are running or waiting. Equal to the core count means fully busy"));
+  }
+  row("memory", "Memory", meter(h.memory.percent, h.memory.level, `${Math.round(h.memory.percent)}%`, `${bytes(pi.mem_used)} of ${bytes(pi.mem_total)} usable`));
+  if (pi.swap_total) {
+    row("swap", "Swap", meter(pi.swap_used / pi.swap_total * 100, "", `${Math.round(pi.swap_used / pi.swap_total * 100)}%`, `${bytes(pi.swap_used)} of ${bytes(pi.swap_total)}`, "Disk space used as overflow memory"));
+  }
+  row("storage", "Storage", meter(h.disk.percent, h.disk.level, `${Math.round(h.disk.percent)}%`, `${bytes(pi.disk_used)} of ${bytes(pi.disk_total)}`));
+  if (pi.net_rx_bps != null) {
+    row("network", "Network", text({ level: "", text: `↓ ${rate(pi.net_rx_bps)}  ↑ ${rate(pi.net_tx_bps)}` }, "in and out"));
+  }
+  row("uptime", "Running for", el("dd", "", duration(pi.uptime_s)));
+  if (pi.os_name || pi.kernel) {
+    const system = text({ level: "", text: pi.os_name || "Unknown" }, pi.kernel ? `kernel ${pi.kernel}` : "");
+    if (pi.reporter_version) system.appendChild(el("small", "detail", `Mindful Fleet ${pi.reporter_version}`));
+    row("system", "System", system);
+  }
   body.appendChild(facts);
-  if (pi.cpu_per_core.length) body.appendChild(coreGrid(pi));
+  if (pi.cpu_per_core.length && shown("cores")) body.appendChild(coreGrid(pi));
 
   article.append(head, body);
   return article;
@@ -404,7 +480,25 @@ async function refresh() {
   }
 }
 
+function setUpRowPicker() {
+  const list = document.getElementById("row-list");
+  for (const [key, label] of ROWS) {
+    const item = el("label", "row-choice");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = shown(key);
+    box.addEventListener("change", () => {
+      layout.hidden = layout.hidden.filter((hidden) => hidden !== key);
+      if (!box.checked) layout.hidden.push(key);
+      commit();
+    });
+    item.append(box, document.createTextNode(` ${label}`));
+    list.appendChild(item);
+  }
+}
+
 function setUpTools() {
+  setUpRowPicker();
   const size = document.getElementById("size");
   size.value = layout.size;
   size.addEventListener("input", () => {

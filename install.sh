@@ -6,7 +6,7 @@
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindful-fleet"
-BRANCH="main"
+BRANCH="${MINDFUL_FLEET_CHANNEL:-release}"  # The release line only holds versions that are ready.
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
 ACTION="${1:-}"

@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -53,6 +53,18 @@ def _number(value, low, high):
     if not math.isfinite(value) or not low <= value <= high:
         raise BadReport("number out of range")
     return value
+
+
+def _numbers(values, low, high, limit=256):
+    if values is None:
+        return []
+    if not isinstance(values, list) or len(values) > limit:
+        raise BadReport("bad number list")
+    return [_number(v, low, high) for v in values]
+
+
+def _text(value, length):
+    return value[:length] if isinstance(value, str) else None
 
 
 def clean_report(raw):
@@ -89,6 +101,17 @@ def clean_report(raw):
         "disk_total": _number(raw.get("disk_total"), 0, terabytes),
         "disk_used": _number(raw.get("disk_used"), 0, terabytes),
         "uptime_s": _number(raw.get("uptime_s"), 0, 10**10),
+        "board_ram_mb": _number(raw.get("board_ram_mb"), 0, 1 << 22),
+        "cpu_mhz": _numbers(raw.get("cpu_mhz"), 0, 100000),
+        "cpu_max_mhz": _number(raw.get("cpu_max_mhz"), 0, 100000),
+        "load_avg": _numbers(raw.get("load_avg"), 0, 100000, limit=3),
+        "swap_total": _number(raw.get("swap_total"), 0, terabytes),
+        "swap_used": _number(raw.get("swap_used"), 0, terabytes),
+        "net_rx_bps": _number(raw.get("net_rx_bps"), 0, terabytes),
+        "net_tx_bps": _number(raw.get("net_tx_bps"), 0, terabytes),
+        "core_volts": _number(raw.get("core_volts"), 0, 10),
+        "os_name": _text(raw.get("os_name"), 60),
+        "kernel": _text(raw.get("kernel"), 40),
     }
 
 
@@ -177,6 +200,7 @@ class Fleet:
                 "age_s": round(age),
                 "history": history,
                 "core_average": core_averages(core_history),
+                "fan_max_rpm": fan_max_rpm,
                 "health": health.assess(report, age, fan_max_rpm),
             })
         cards.sort(key=lambda c: _natural_key(c["hostname"]))
@@ -283,11 +307,22 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "fan_percent": None if fan == 0 else 45,
         "input_volts": round(5.08 + random.uniform(-0.02, 0.02), 2),
         "cpu_per_core": cpu or [round(random.uniform(8, 30), 1) for _ in range(4)],
-        "mem_total": 8 * gib,
-        "mem_used": 8 * gib * mem // 100,
+        "mem_total": (4 if name in ("pi-hole", "old-shed-pi") else 8) * gib * 98 // 100,
+        "mem_used": (4 if name in ("pi-hole", "old-shed-pi") else 8) * gib * mem // 100,
         "disk_total": 64 * gib,
         "disk_used": 64 * gib * disk // 100,
         "uptime_s": uptime,
+        "cpu_mhz": [2400 if c > 50 else 1500 for c in (cpu or [20] * 4)],
+        "cpu_max_mhz": 2400,
+        "board_ram_mb": 4096 if name in ("pi-hole", "old-shed-pi") else 8192,
+        "load_avg": [round(sum(cpu or [20] * 4) / 100 + random.uniform(-0.1, 0.1), 2), 1.1, 1.0],
+        "swap_total": 512 * 1024**2,
+        "swap_used": 12 * 1024**2,
+        "net_rx_bps": random.randint(2000, 40000),
+        "net_tx_bps": random.randint(1000, 9000),
+        "core_volts": 0.88,
+        "os_name": "Debian GNU/Linux 13 (trixie)",
+        "kernel": "6.18.50+rpt-rpi-2712",
     }
 
 

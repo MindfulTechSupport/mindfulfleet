@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 (2026-11-10)
+
+- Each card's top shows the board model and memory size, such as "Raspberry Pi 5, 8 GB".
+- Numbers and limits beside every graphic: memory and storage used of total, cores in use, fan's fastest speed seen.
+- New readings: clock speed now and maximum, load, swap, network in and out, core voltage, and system version.
+- Each core shows its load now, its 30-minute average, and its clock speed.
+- Choose which rows the cards show, saved in your browser.
+- Automatic daily updates from the release branch, with commands to hold, skip, or resume them on each computer.
+
 ## 0.2.0 (2026-11-03)
 
 - Card size slider, your own card order, and groups, saved in your browser.

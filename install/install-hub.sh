@@ -52,6 +52,7 @@ PrivateDevices=yes
 WantedBy=multi-user.target
 EOF
 
+bash "$SOURCE/install/install-updater.sh"
 systemctl daemon-reload
 systemctl enable mindful-fleet-hub >/dev/null
 systemctl restart mindful-fleet-hub
@@ -63,4 +64,4 @@ echo "Dashboard:  http://$IP:$PORT/"
 echo "Fleet token (keep this private):  $TOKEN"
 echo
 echo "To add a computer, including this one, paste this line on it:"
-echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/main/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"
+echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"

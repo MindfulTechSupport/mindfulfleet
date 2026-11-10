@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 DEFAULT_INTERVAL = 15
 
 
@@ -85,6 +85,72 @@ def read_input_volts(run=subprocess.run):
         return None
 
 
+def read_cpu_mhz(root="/"):
+    """Each core's clock speed right now, and the fastest it's allowed to run, in MHz."""
+    now, top = [], None
+    for path in sorted(glob.glob(os.path.join(root, "sys/devices/system/cpu/cpu[0-9]*")),
+                       key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0)):
+        raw = _read(path, "cpufreq/scaling_cur_freq")
+        try:
+            now.append(round(int(raw.strip()) / 1000))
+        except (AttributeError, ValueError):
+            continue
+        if top is None:
+            for name in ("cpufreq/scaling_max_freq", "cpufreq/cpuinfo_max_freq"):
+                try:
+                    top = round(int(_read(path, name).strip()) / 1000)
+                    break
+                except (AttributeError, ValueError):
+                    pass
+    return now, top
+
+
+def read_load(root="/"):
+    raw = _read(root, "/proc/loadavg")
+    try:
+        return [float(value) for value in raw.split()[:3]]
+    except (AttributeError, ValueError):
+        return None
+
+
+def read_net_bytes(root="/"):
+    """Total bytes received and sent on every interface except loopback."""
+    text = _read(root, "/proc/net/dev")
+    if not text:
+        return None
+    received = sent = 0
+    for line in text.splitlines()[2:]:
+        name, _, rest = line.partition(":")
+        fields = rest.split()
+        if name.strip() == "lo" or len(fields) < 9:
+            continue
+        received += int(fields[0])
+        sent += int(fields[8])
+    return received, sent, time.monotonic()
+
+
+def net_rates(before, after):
+    if not before or not after or after[2] <= before[2]:
+        return None, None
+    seconds = after[2] - before[2]
+    return (max(0, round((after[0] - before[0]) / seconds)),
+            max(0, round((after[1] - before[1]) / seconds)))
+
+
+def read_core_volts(run=subprocess.run):
+    try:
+        result = run(["vcgencmd", "measure_volts", "core"], capture_output=True, text=True, timeout=5)
+        match = re.search(r"volt=([\d.]+)V", result.stdout) if result.returncode == 0 else None
+        return round(float(match.group(1)), 3) if match else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def read_os_name(root="/"):
+    match = re.search(r'^PRETTY_NAME="?([^"\n]*)', _read(root, "/etc/os-release") or "", re.M)
+    return match.group(1)[:60] if match else None
+
+
 def read_cpu_times(root="/"):
     """Return {core_index: (busy_ticks, total_ticks)} from /proc/stat."""
     text = _read(root, "/proc/stat") or ""
@@ -128,6 +194,19 @@ def read_memory(root="/"):
     return total, total - available
 
 
+def read_swap(root="/"):
+    values = {}
+    for line in (_read(root, "/proc/meminfo") or "").splitlines():
+        key, _, rest = line.partition(":")
+        fields = rest.split()
+        if fields and fields[0].isdigit():
+            values[key] = int(fields[0]) * 1024
+    total, free = values.get("SwapTotal"), values.get("SwapFree")
+    if total is None or free is None:
+        return None, None
+    return total, total - free
+
+
 def read_disk(path="/"):
     try:
         usage = shutil.disk_usage(path)
@@ -149,6 +228,17 @@ def read_model(root="/"):
     return raw.replace("\x00", "").strip() if raw else None
 
 
+def read_board_ram_mb(root="/"):
+    """Memory fitted to the board, decoded from the revision code that Raspberry Pi boards report."""
+    match = re.search(r"^Revision\s*:\s*([0-9a-fA-F]+)", _read(root, "/proc/cpuinfo") or "", re.M)
+    if not match:
+        return None
+    code = int(match.group(1), 16)
+    if not code & (1 << 23):  # Older boards use a different scheme.
+        return None
+    return 256 << ((code >> 20) & 7)
+
+
 def machine_identity(hostname, root="/"):
     """A stable id. Hostname is mixed in so cloned SD cards with new names stay separate,
     and machine-id is mixed in so two Pis left named 'raspberrypi' stay separate."""
@@ -168,9 +258,12 @@ def local_ip(hub_url):
 
 
 def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subprocess.run,
-            hostname=None):
+            hostname=None, net_before=None, net_after=None):
     hostname = hostname or socket.gethostname()
     mem_total, mem_used = read_memory(root)
+    swap_total, swap_used = read_swap(root)
+    mhz_now, mhz_max = read_cpu_mhz(root)
+    net_in, net_out = net_rates(net_before, net_after)
     disk_total, disk_used = read_disk(disk_path)
     return {
         "id": machine_identity(hostname, root),
@@ -189,6 +282,17 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "disk_total": disk_total,
         "disk_used": disk_used,
         "uptime_s": read_uptime(root),
+        "board_ram_mb": read_board_ram_mb(root),
+        "cpu_mhz": mhz_now,
+        "cpu_max_mhz": mhz_max,
+        "load_avg": read_load(root),
+        "swap_total": swap_total,
+        "swap_used": swap_used,
+        "net_rx_bps": net_in,
+        "net_tx_bps": net_out,
+        "core_volts": read_core_volts(run),
+        "os_name": read_os_name(root),
+        "kernel": os.uname().release[:40] if root == "/" else None,
     }
 
 
@@ -219,13 +323,13 @@ def main(argv=None):
     if not args.print_only and (not args.hub or not token):
         parser.error("needs --hub (or MINDFUL_FLEET_HUB) and the MINDFUL_FLEET_TOKEN environment variable")
 
-    before = read_cpu_times()
+    before, net_before = read_cpu_times(), read_net_bytes()
     time.sleep(1)
     failing = False
     while True:
-        after = read_cpu_times()
-        report = collect(args.hub or "", before, after)
-        before = after
+        after, net_after = read_cpu_times(), read_net_bytes()
+        report = collect(args.hub or "", before, after, net_before=net_before, net_after=net_after)
+        before, net_before = after, net_after
         if args.print_only:
             print(json.dumps(report, indent=2))
             return 0

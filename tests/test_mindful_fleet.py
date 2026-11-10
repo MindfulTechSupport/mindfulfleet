@@ -22,7 +22,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.0", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.1", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -157,6 +157,40 @@ class ReporterTests(unittest.TestCase):
             stdout = "error=2 error_msg=\"Invalid arguments\"\n"
         self.assertIsNone(reporter.read_input_volts(lambda *a, **k: Old()))
 
+    def test_clock_load_swap_network_os_and_board(self):
+        root = self.root
+        for core, khz in ((0, "2400000"), (1, "1500000"), (10, "2400000")):
+            folder = root / f"sys/devices/system/cpu/cpu{core}/cpufreq"
+            folder.mkdir(parents=True)
+            (folder / "scaling_cur_freq").write_text(khz + "\n")
+            (folder / "cpuinfo_max_freq").write_text("2400000\n")
+        self.assertEqual(reporter.read_cpu_mhz(str(root)), ([2400, 1500, 2400], 2400))
+        (root / "proc/loadavg").write_text("3.98 3.91 3.80 5/300 1234\n")
+        self.assertEqual(reporter.read_load(str(root)), [3.98, 3.91, 3.8])
+        (root / "proc/meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 512 kB\nSwapFree: 500 kB\n")
+        self.assertEqual(reporter.read_swap(str(root)), (512 * 1024, 12 * 1024))
+        (root / "proc/net").mkdir()
+        (root / "proc/net/dev").write_text(
+            "Inter-| Receive\n face |bytes\n"
+            "    lo: 999 1 0 0 0 0 0 0 999 1 0 0 0 0 0 0\n"
+            "  eth0: 1000 1 0 0 0 0 0 0 200 1 0 0 0 0 0 0\n"
+            " wlan0: 500 1 0 0 0 0 0 0 100 1 0 0 0 0 0 0\n")
+        received, sent, _ = reporter.read_net_bytes(str(root))
+        self.assertEqual((received, sent), (1500, 300))
+        self.assertEqual(reporter.net_rates((0, 0, 10.0), (3000, 600, 12.0)), (1500, 300))
+        self.assertEqual(reporter.net_rates(None, (1, 1, 1.0)), (None, None))
+        (root / "etc/os-release").write_text('NAME="Debian"\nPRETTY_NAME="Debian GNU/Linux 13 (trixie)"\n')
+        self.assertEqual(reporter.read_os_name(str(root)), "Debian GNU/Linux 13 (trixie)")
+        for code, mb in (("d04170", 8192), ("c04170", 4096), ("e04171", 16384), ("a02082", 1024), ("0010", None)):
+            (root / "proc/cpuinfo").write_text(f"Hardware\t: BCM2835\nRevision\t: {code}\n")
+            self.assertEqual(reporter.read_board_ram_mb(str(root)), mb, code)
+
+    def test_core_volts(self):
+        class Result:
+            returncode = 0
+            stdout = "volt=0.8762V\n"
+        self.assertEqual(reporter.read_core_volts(lambda *a, **k: Result()), 0.876)
+
     def test_missing_files_give_none(self):
         empty = tempfile.mkdtemp(dir=self.dir.name)
         self.assertIsNone(reporter.read_temperature_c(empty))
@@ -227,6 +261,19 @@ class HubTests(unittest.TestCase):
 
     def test_oversized_report_refused(self):
         self.assertEqual(self.post(b"x" * (hub.MAX_BODY_BYTES + 1)), 413)
+
+    def test_new_fields_accepted_and_checked(self):
+        self.assertEqual(self.post(report(cpu_mhz=[2400, 1500], cpu_max_mhz=2400, load_avg=[1, 2, 3],
+                                          board_ram_mb=8192, os_name="Debian", net_rx_bps=10)), 200)
+        pi = self.fleet_json()["pis"][0]
+        self.assertEqual((pi["cpu_mhz"], pi["board_ram_mb"], pi["os_name"]), ([2400, 1500], 8192, "Debian"))
+        self.assertEqual(self.post(report(load_avg=[1, 2, 3, 4])), 400)
+        self.assertEqual(self.post(report(cpu_mhz="fast")), 400)
+
+    def test_older_reporters_still_accepted(self):
+        old = report()
+        self.assertEqual(self.post(old), 200)
+        self.assertEqual(self.fleet_json()["pis"][0]["cpu_mhz"], [])
 
     def test_extra_fields_dropped(self):
         self.post(report(surprise="data"))

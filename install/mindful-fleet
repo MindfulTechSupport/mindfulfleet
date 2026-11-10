@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Mindful Fleet update control.
+#   mindful-fleet status         show installed and latest versions, and the update setting
+#   mindful-fleet update         update now
+#   mindful-fleet hold           stop automatic updates on this computer
+#   mindful-fleet skip           skip the latest version, and take the next one after it
+#   mindful-fleet resume         turn automatic updates back on and clear any skip
+set -euo pipefail
+
+REPO="MindfulTechSupport/mindful-fleet"
+CHANNEL="${MINDFUL_FLEET_CHANNEL:-release}"
+CONF=/etc/mindful-fleet/update.conf
+
+installed() { cat /opt/mindful-fleet/VERSION 2>/dev/null || echo "unknown"; }
+latest() { curl -fsSL --max-time 20 "https://raw.githubusercontent.com/$REPO/$CHANNEL/VERSION" | tr -d '[:space:]'; }
+setting() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1; }
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+need_root() { [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }; }
+save() {
+  need_root
+  install -d -m 755 /etc/mindful-fleet
+  printf 'AUTO_UPDATE=%s\nSKIP_VERSION=%s\n' "$1" "$2" > "$CONF"
+}
+
+case "${1:-status}" in
+  status)
+    LATEST="$(latest || echo "unknown")"
+    echo "Installed: $(installed)"
+    echo "Latest:    $LATEST"
+    echo "Automatic updates: $( [ "$(setting AUTO_UPDATE)" = off ] && echo "on hold" || echo "on")"
+    SKIP="$(setting SKIP_VERSION)"
+    [ -n "$SKIP" ] && echo "Skipping:  $SKIP"
+    ;;
+  hold)
+    save off "$(setting SKIP_VERSION)"
+    echo "Automatic updates are on hold. This computer stays on $(installed). Run 'sudo mindful-fleet resume' to turn them back on."
+    ;;
+  resume)
+    save on ""
+    echo "Automatic updates are on."
+    ;;
+  skip)
+    LATEST="$(latest)"
+    save "$(setting AUTO_UPDATE | grep . || echo on)" "$LATEST"
+    echo "Skipping $LATEST. This computer will update again when a newer version comes out."
+    ;;
+  update)
+    need_root
+    LATEST="$(latest)" || { echo "Couldn't check for updates." >&2; exit 1; }
+    CURRENT="$(installed)"
+    if [ "${2:-}" = "--auto" ]; then
+      [ "$(setting AUTO_UPDATE)" = off ] && { echo "Updates are on hold."; exit 0; }
+      [ "$LATEST" = "$(setting SKIP_VERSION)" ] && { echo "Skipping $LATEST as asked."; exit 0; }
+    fi
+    if ! newer "$LATEST" "$CURRENT" && [ "$CURRENT" != "unknown" ]; then
+      echo "Already up to date ($CURRENT)."
+      exit 0
+    fi
+    echo "Updating from $CURRENT to $LATEST."
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
+    ;;
+  *)
+    echo "Usage: mindful-fleet status | update | hold | skip | resume" >&2
+    exit 1
+    ;;
+esac
