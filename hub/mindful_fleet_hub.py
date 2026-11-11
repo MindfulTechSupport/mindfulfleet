@@ -388,8 +388,9 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
             origin = self.headers.get("Origin")
             if origin is None:
                 return True
-            host = self.headers.get("Host", "")
-            return origin in (f"http://{host}", f"https://{host}")
+            sent_from = urllib.parse.urlsplit(origin)
+            return sent_from.scheme in ("http", "https") and bool(sent_from.netloc) \
+                and sent_from.netloc == self.headers.get("Host") and not sent_from.path
 
         def _read_json(self, limit):
             """Returns the parsed body, or None after sending the refusal."""

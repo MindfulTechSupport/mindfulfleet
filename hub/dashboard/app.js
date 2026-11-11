@@ -1284,7 +1284,7 @@ function setUpSignIn() {
 
 function start() {
   const keepRefreshing = () => {
-    refresh();
+    void refresh();
     if (!refreshTimer) refreshTimer = setInterval(refresh, REFRESH_MS);
   };
   if (started) {
@@ -1292,7 +1292,7 @@ function start() {
     return;
   }
   started = true;
-  loadSharedLayout().finally(() => {
+  void loadSharedLayout().finally(() => {
     setUpTools();
     keepRefreshing();
   });
@@ -1312,4 +1312,4 @@ async function begin() {
   else start();
 }
 
-begin();
+void begin();
