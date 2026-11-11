@@ -1004,6 +1004,10 @@ async function refresh() {
   const connection = document.getElementById("connection");
   try {
     const response = await fetch("/api/fleet", { cache: "no-store" });
+    if (response.status === 401) {
+      showSignIn("");
+      return;
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { pis, latest_version: latest } = await response.json();
     latestPis = pis;
@@ -1170,8 +1174,127 @@ function setUpTools() {
   });
 }
 
-loadSharedLayout().finally(() => {
-  setUpTools();
-  refresh();
-  setInterval(refresh, REFRESH_MS);
-});
+// Signing in. The password goes only to the hub; the browser keeps a sign-in cookie it can't read from scripts.
+let started = false;
+
+async function sendJson(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // An empty or odd reply still has a status.
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
+function waitWords(data) {
+  if (!data.wait) return "";
+  const minutes = Math.ceil(data.wait / 60);
+  return data.wait < 60 ? ` Try again in ${data.wait} seconds.` : ` Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
+function showSignIn(message) {
+  document.getElementById("sign-in").hidden = false;
+  for (const part of document.querySelectorAll(".top, main, .foot")) part.hidden = true;
+  document.getElementById("sign-in-message").textContent = message;
+  document.getElementById("sign-in-password").focus();
+}
+
+function hideSignIn() {
+  document.getElementById("sign-in").hidden = true;
+  for (const part of document.querySelectorAll(".top, main, .foot")) part.hidden = false;
+}
+
+function setUpAccount(passwordSet) {
+  document.getElementById("no-password").hidden = passwordSet;
+  document.getElementById("account").hidden = !passwordSet;
+}
+
+function setUpSignIn() {
+  const form = document.getElementById("sign-in-form");
+  const input = document.getElementById("sign-in-password");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = document.getElementById("sign-in-message");
+    message.textContent = "Checking…";
+    try {
+      const { ok, data } = await sendJson("/api/sign-in", { password: input.value });
+      if (!ok) {
+        message.textContent = (data.error || "That didn't work.") + waitWords(data);
+        input.select();
+        return;
+      }
+      input.value = "";
+      hideSignIn();
+      start();
+    } catch {
+      message.textContent = "Can't reach the hub. Check it's switched on, then try again.";
+    }
+  });
+
+  document.getElementById("sign-out").addEventListener("click", async () => {
+    try {
+      await sendJson("/api/sign-out", {});
+    } finally {
+      window.location.reload();
+    }
+  });
+
+  document.getElementById("change-password").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = document.getElementById("change-message");
+    const current = document.getElementById("current-password");
+    const fresh = document.getElementById("new-password");
+    const repeat = document.getElementById("repeat-password");
+    if (fresh.value !== repeat.value) {
+      message.textContent = "The two new passwords don't match.";
+      return;
+    }
+    message.textContent = "Saving…";
+    try {
+      const { ok, data } = await sendJson("/api/password", { current: current.value, new: fresh.value });
+      if (!ok) {
+        message.textContent = (data.error || "That didn't work.") + waitWords(data);
+        return;
+      }
+      for (const field of [current, fresh, repeat]) field.value = "";
+      message.textContent = "Password changed. Every other browser has been signed out.";
+    } catch {
+      message.textContent = "Can't reach the hub. Your password wasn't changed.";
+    }
+  });
+}
+
+function start() {
+  if (started) {
+    refresh();
+    return;
+  }
+  started = true;
+  loadSharedLayout().finally(() => {
+    setUpTools();
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  });
+}
+
+async function begin() {
+  setUpSignIn();
+  let status = { password_set: false, signed_in: true };
+  try {
+    const response = await fetch("/api/auth", { cache: "no-store" });
+    if (response.ok) status = await response.json();
+  } catch {
+    // The hub may be restarting. Carry on; refresh() reports it.
+  }
+  setUpAccount(status.password_set);
+  if (status.password_set && !status.signed_in) showSignIn("");
+  else start();
+}
+
+begin();

@@ -64,5 +64,10 @@ echo "Hub installed."
 echo "Dashboard:  http://$IP:$PORT/"
 echo "Fleet token (keep this private):  $TOKEN"
 echo
+if [ ! -f /var/lib/mindful-fleet/password.json ]; then
+  echo "Next, give the dashboard a password, so only you can open it:"
+  echo "  sudo mindful-fleet password"
+  echo
+fi
 echo "To add a computer, including this one, paste this line on it:"
 echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"

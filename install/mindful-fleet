@@ -7,6 +7,8 @@
 #   mindful-fleet resume         turn automatic updates back on and clear any skip
 #   mindful-fleet every hourly|6h|daily|weekly   how often to check for updates
 #   mindful-fleet xmrig          turn on XMRig's read-only API so the dashboard shows hashrate
+#   mindful-fleet password       choose or change the dashboard password (on the hub)
+#   mindful-fleet password off   turn the dashboard password off (on the hub)
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindfulfleet"
@@ -69,6 +71,24 @@ case "${1:-status}" in
     shift
     exec python3 /opt/mindful-fleet/xmrig-api.py "$@"
     ;;
+  password)
+    need_root
+    [ -f /etc/mindful-fleet/hub.env ] || { echo "This computer isn't the hub. Run this on the computer that shows the dashboard." >&2; exit 1; }
+    STATE="$(sed -n 's/^MINDFUL_FLEET_STATE=//p' /etc/mindful-fleet/hub.env | tail -1)"
+    STATE="${STATE:-/var/lib/mindful-fleet/fleet.json}"
+    FILE="$(dirname "$STATE")/password.json"
+    if [ "${2:-}" = "off" ]; then
+      [ -f "$FILE" ] || { echo "There's no dashboard password to turn off."; exit 0; }
+      KEPT="$FILE.off-$(date +%Y%m%d-%H%M%S)"
+      mv "$FILE" "$KEPT"
+      echo "Dashboard password is off: anyone on your network can open the dashboard."
+      echo "To turn it back on with the same password: sudo mv $KEPT $FILE"
+      exit 0
+    fi
+    MINDFUL_FLEET_STATE="$STATE" python3 /opt/mindful-fleet/hub/mindful_fleet_hub.py --set-password
+    chown mindful-fleet:mindful-fleet "$FILE"
+    chmod 600 "$FILE"
+    ;;
   update)
     need_root
     LATEST="$(latest)" || { echo "Couldn't check for updates." >&2; exit 1; }
@@ -85,7 +105,7 @@ case "${1:-status}" in
     curl -fsSL "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
     ;;
   *)
-    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig" >&2
+    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig | password [off]" >&2
     exit 1
     ;;
 esac

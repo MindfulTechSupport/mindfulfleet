@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.11 (2026-11-11)
+
+- Dashboard password, the first step toward remote control. Set it on the hub with `sudo mindful-fleet password`. The dashboard then asks for it; each browser stays signed in for 30 days. Change it or sign out under Settings → Password and sign out.
+- Wrong guesses slow down: a few free tries, then a wait that doubles each time, up to 5 minutes.
+- The hub keeps only a salted hash of the password. Changing it signs out every other browser. `sudo mindful-fleet password off` turns it off and keeps the old one so it can be put back.
+- Until a password is set, the dashboard works as before and shows a reminder.
+- The hub refuses dashboard changes sent from other websites.
+
 ## 0.2.10 (2026-11-10)
 
 - New name: MindfulFleet. The GitHub repository is now MindfulTechSupport/mindfulfleet; old links still work. The `mindful-fleet` command, its folders and its services keep their names, so installed computers carry on as before.

@@ -15,6 +15,7 @@ sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter")]
 
 import health  # noqa: E402
 import mindful_fleet_hub as hub  # noqa: E402
+import auth  # noqa: E402
 import mindful_fleet_reporter as reporter  # noqa: E402
 import averages  # noqa: E402
 
@@ -24,7 +25,7 @@ GIB = 1024**3
 def report(**changes):
     base = {
         "id": "abcdef0123456789", "hostname": "test-pi", "ip": "192.168.1.5", "model": "x",
-        "reporter_version": "0.2.10", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
+        "reporter_version": "0.2.11", "temp_c": 50.0, "throttled": 0, "fan_rpm": 2000,
         "cpu_per_core": [100.0] * 4, "mem_total": 8 * GIB, "mem_used": 2 * GIB,
         "disk_total": 64 * GIB, "disk_used": 10 * GIB, "uptime_s": 100,
     }
@@ -407,6 +408,186 @@ class HubTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(self.base + path)
             self.assertEqual(caught.exception.code, 404)
+
+
+class PasswordTests(unittest.TestCase):
+    def test_hash_checks_only_the_right_password(self):
+        record = auth.hash_password("correct horse battery", iterations=1000)
+        self.assertNotIn("correct horse", json.dumps(record))
+        self.assertTrue(auth.check_password("correct horse battery", record))
+        self.assertFalse(auth.check_password("correct horse batterY", record))
+        self.assertFalse(auth.check_password(None, record))
+        self.assertFalse(auth.check_password("x", {"algorithm": "md5"}))
+        self.assertNotEqual(record["salt"], auth.hash_password("correct horse battery", iterations=1000)["salt"])
+
+    def test_password_rules(self):
+        self.assertIsNotNone(auth.password_problem("short"))
+        self.assertIsNotNone(auth.password_problem(" padded password "))
+        self.assertIsNotNone(auth.password_problem("x" * 201))
+        self.assertIsNone(auth.password_problem("my pis run cool"))
+
+    def test_guessing_slows_down_and_success_resets(self):
+        now = [0.0]
+        guard = auth.Guard(clock=lambda: now[0])
+        for _ in range(auth.FREE_TRIES - 1):
+            guard.missed("10.0.0.9")
+        self.assertEqual(guard.wait_seconds("10.0.0.9"), 0)
+        guard.missed("10.0.0.9")
+        first = guard.wait_seconds("10.0.0.9")
+        self.assertGreater(first, 0)
+        now[0] += first
+        guard.missed("10.0.0.9")
+        self.assertGreater(guard.wait_seconds("10.0.0.9"), first)
+        self.assertEqual(guard.wait_seconds("10.0.0.10"), 0)
+        guard.passed("10.0.0.9")
+        self.assertEqual(guard.wait_seconds("10.0.0.9"), 0)
+
+    def test_many_addresses_guessing_makes_everyone_wait(self):
+        guard = auth.Guard(clock=lambda: 0.0)
+        for n in range(auth.FLEET_WIDE_LIMIT):
+            guard.missed(f"10.0.{n}.1")
+        self.assertGreater(guard.wait_seconds("10.9.9.9"), 0)
+
+    def test_wait_never_exceeds_five_minutes(self):
+        now = [0.0]
+        guard = auth.Guard(clock=lambda: now[0])
+        for _ in range(40):
+            now[0] += 1000
+            guard.missed("a")
+        self.assertLessEqual(guard.wait_seconds("a"), auth.MAX_WAIT_SECONDS)
+
+    def test_command_sets_password_and_file_is_private(self):
+        folder = tempfile.mkdtemp()
+        passwords = auth.Auth(Path(folder, "password.json"), iterations=1000)
+        answers = iter(["too short", "my pis run cool", "my pis run cooler", "my pis run cool", "my pis run cool"])
+        self.assertEqual(hub.set_password_here(passwords, None, ask=lambda _: next(answers)), 0)
+        self.assertTrue(passwords.has_password())
+        self.assertEqual(os.stat(Path(folder, "password.json")).st_mode & 0o777, 0o600)
+        token, _ = passwords.sign_in("my pis run cool", "a")
+        self.assertTrue(passwords.session_ok(token))
+
+
+class SignInTests(unittest.TestCase):
+    def setUp(self):
+        self.now = [1000.0]
+        self.folder = tempfile.mkdtemp()
+        self.passwords = auth.Auth(Path(self.folder, "password.json"), clock=lambda: self.now[0], iterations=1000)
+        self.passwords.set_password("my pis run cool")
+        self.fleet = hub.Fleet(clock=lambda: self.now[0])
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0),
+                                          hub.make_handler(self.fleet, "secret", passwords=self.passwords))
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def call(self, path, body=None, method=None, cookie=None, headers=None):
+        all_headers = {"Content-Type": "application/json", **(headers or {})}
+        if cookie:
+            all_headers["Cookie"] = f"{auth.COOKIE}={cookie}"
+        data = None if body is None else json.dumps(body).encode()
+        request = urllib.request.Request(self.base + path, data=data, method=method, headers=all_headers)
+        try:
+            with urllib.request.urlopen(request) as response:
+                return response.status, json.load(response), response.headers
+        except urllib.error.HTTPError as error:
+            return error.code, json.load(error), error.headers
+
+    def sign_in(self, password="my pis run cool"):
+        status, _, headers = self.call("/api/sign-in", {"password": password})
+        cookie = headers.get("Set-Cookie", "")
+        return status, cookie.split(";", 1)[0].partition("=")[2], cookie
+
+    def test_fleet_data_needs_sign_in(self):
+        for path in ("/api/fleet", "/api/layout", "/api/history?id=abcdef0123456789"):
+            with self.subTest(path=path):
+                self.assertEqual(self.call(path)[0], 401)
+        self.assertEqual(self.call("/api/auth")[1], {"password_set": True, "signed_in": False})
+
+    def test_page_files_and_health_stay_open(self):
+        for path in ("/", "/app.js", "/style.css", "/healthz"):
+            with urllib.request.urlopen(self.base + path) as response:
+                self.assertEqual(response.status, 200)
+
+    def test_right_password_signs_in_with_a_safe_cookie(self):
+        status, session, cookie = self.sign_in()
+        self.assertEqual(status, 200)
+        for part in ("HttpOnly", "SameSite=Strict", "Path=/"):
+            self.assertIn(part, cookie)
+        self.assertEqual(self.call("/api/fleet", cookie=session)[0], 200)
+        self.assertEqual(self.call("/api/auth", cookie=session)[1]["signed_in"], True)
+
+    def test_wrong_password_refused_then_slowed(self):
+        for _ in range(auth.FREE_TRIES - 1):
+            self.assertEqual(self.sign_in("wrong password!")[0], 401)
+        self.assertEqual(self.sign_in("wrong password!")[0], 429)
+        self.assertEqual(self.sign_in()[0], 429)  # Even the right one waits its turn.
+
+    def test_sign_out_ends_the_session(self):
+        _, session, _ = self.sign_in()
+        self.assertEqual(self.call("/api/sign-out", {}, cookie=session)[0], 200)
+        self.assertEqual(self.call("/api/fleet", cookie=session)[0], 401)
+
+    def test_session_expires(self):
+        _, session, _ = self.sign_in()
+        self.now[0] += auth.SESSION_SECONDS + 1
+        self.assertEqual(self.call("/api/fleet", cookie=session)[0], 401)
+
+    def test_made_up_cookie_refused(self):
+        self.assertEqual(self.call("/api/fleet", cookie="made-up")[0], 401)
+        self.assertEqual(self.call("/api/fleet", headers={"Cookie": "\x00;;=bad"})[0], 401)
+
+    def test_change_password_needs_the_current_one_and_signs_others_out(self):
+        _, mine, _ = self.sign_in()
+        _, other, _ = self.sign_in()
+        status, body, _ = self.call("/api/password", {"current": "nope nope nope", "new": "a newer password"}, cookie=mine)
+        self.assertEqual(status, 400)
+        self.assertIn("current password", body["error"])
+        self.assertEqual(self.call("/api/password", {"current": "my pis run cool", "new": "short"}, cookie=mine)[0], 400)
+        status, _, headers = self.call("/api/password", {"current": "my pis run cool", "new": "a newer password"},
+                                       cookie=mine)
+        self.assertEqual(status, 200)
+        fresh = headers["Set-Cookie"].split(";", 1)[0].partition("=")[2]
+        self.assertEqual(self.call("/api/fleet", cookie=other)[0], 401)
+        self.assertEqual(self.call("/api/fleet", cookie=mine)[0], 401)
+        self.assertEqual(self.call("/api/fleet", cookie=fresh)[0], 200)
+        self.assertEqual(self.sign_in("a newer password")[0], 200)
+
+    def test_change_password_needs_sign_in(self):
+        self.assertEqual(self.call("/api/password", {"current": "my pis run cool", "new": "a newer password"})[0], 401)
+
+    def test_new_password_from_the_hub_signs_everyone_out(self):
+        _, session, _ = self.sign_in()
+        auth.Auth(Path(self.folder, "password.json"), iterations=1000).set_password("set on the hub itself")
+        self.assertEqual(self.call("/api/fleet", cookie=session)[0], 401)
+
+    def test_other_sites_refused(self):
+        evil = {"Origin": "http://evil.example"}
+        self.assertEqual(self.call("/api/sign-in", {"password": "my pis run cool"}, headers=evil)[0], 404)
+        _, session, _ = self.sign_in()
+        self.assertEqual(self.call("/api/layout", {"order": []}, method="PUT", cookie=session, headers=evil)[0], 404)
+        same = {"Origin": self.base}
+        self.assertEqual(self.call("/api/layout", {"order": []}, method="PUT", cookie=session, headers=same)[0], 200)
+
+    def test_form_posts_refused(self):
+        status, _, _ = self.call("/api/sign-in", {"password": "my pis run cool"},
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 404)
+
+    def test_layout_change_needs_sign_in(self):
+        self.assertEqual(self.call("/api/layout", {"order": []}, method="PUT")[0], 401)
+
+    def test_reporters_still_report_with_the_token(self):
+        request = urllib.request.Request(self.base + "/api/report", data=json.dumps(report()).encode(), method="POST",
+                                         headers={"Authorization": "Bearer secret"})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_no_password_yet_keeps_the_dashboard_open(self):
+        Path(self.folder, "password.json").unlink()
+        self.assertEqual(self.call("/api/fleet")[0], 200)
+        self.assertEqual(self.call("/api/auth")[1], {"password_set": False, "signed_in": True})
+        self.assertEqual(self.call("/api/sign-in", {"password": "anything at all"})[0], 409)
 
 
 class XmrigTests(unittest.TestCase):

@@ -26,6 +26,22 @@ curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/rel
 
 It prints the dashboard address and a ready-made line for adding computers. Paste that line on every computer you want to watch, including that one. Each one shows up within about 15 seconds.
 
+## Dashboard password
+
+Give the dashboard a password so only you can open it. On the hub, run:
+
+```
+sudo mindful-fleet password
+```
+
+Choose at least 10 characters; a short sentence you'll remember works well. From then on the dashboard asks for it, and each browser stays signed in for 30 days. You can change it, or sign out, under Settings → Password and sign out. Changing it signs out every other browser.
+
+- Forgot it? Run `sudo mindful-fleet password` on the hub again to choose a new one.
+- To turn the password off, run `sudo mindful-fleet password off` on the hub. It keeps the old password in a file so you can put it back, and tells you how.
+- Until you set one, the dashboard stays open to anyone on your network, as before, and shows a reminder.
+- After a few wrong guesses, the dashboard makes you wait, longer each time, up to 5 minutes.
+- The hub keeps only a salted hash of the password (PBKDF2-SHA256), never the password itself.
+
 ## Updates
 
 Each computer checks for a new version once a day, at a random time so a whole fleet doesn't restart at once, and updates itself. Only versions on the `release` branch are installed. Day-to-day work on `main` never reaches your computers.
@@ -41,6 +57,7 @@ To control updates on a computer:
 | `sudo mindful-fleet resume` | Turns automatic updates back on and clears any skip |
 | `sudo mindful-fleet xmrig` | Turns on XMRig's read-only API so the card shows hashrate. See Mining |
 | `sudo mindful-fleet every 6h` | Checks for updates every 6 hours. Also `hourly`, `daily` (the default), or `weekly` |
+| `sudo mindful-fleet password` | On the hub: chooses or changes the dashboard password. `password off` turns it off |
 
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
@@ -105,7 +122,8 @@ CPU load never changes the color, because some computers, such as miners, are me
 
 - USB fans can't report their speed, so they show "Not reported".
 - A fan's "Fan effort" and the "Voltage" row only appear on boards that report them. Voltage needs a Pi 5.
-- Anyone who can open the dashboard can change its shared layout.
+- Anyone who can open the dashboard can change its shared layout. Set a password to keep others out.
+- Signing in again is needed after the hub restarts.
 - Power use is the board's own use as its power chip measures it, on Pi 5 boards only. It leaves out USB devices, fans on their own supply, and power-supply losses, so a wall meter reads higher.
 - Averages cover only the history the hub has. After a hub restart, it picks up from its last save, up to 5 minutes old.
 - Updates are held or skipped per computer, not from the dashboard yet.
@@ -116,7 +134,8 @@ CPU load never changes the color, because some computers, such as miners, are me
 - Reports need the fleet token. Both programs run as an unprivileged user under a locked-down service.
 - The hub contacts GitHub every 6 hours to see whether a newer version exists. It sends nothing about your fleet. Start it with `--no-update-check` to turn this off.
 - The reporter sends the name of the busiest program on each computer to the hub.
-- Traffic is plain HTTP, so **it isn't encrypted**. Anyone on your network could read the numbers and the token, and anyone who can open the dashboard can see your fleet. Use it on a home network you trust, and don't forward its port to the internet.
+- The dashboard password keeps people on your network out of the dashboard. Its sign-in cookie can't be read by scripts and isn't sent by other websites, and the hub refuses changes sent from other sites.
+- Traffic is plain HTTP, so **it isn't encrypted**. Anyone on your network could read the numbers, the token and, while you sign in, the password. Use it on a home network you trust, and don't forward its port to the internet. Encrypted links are planned.
 
 ## Remove it
 

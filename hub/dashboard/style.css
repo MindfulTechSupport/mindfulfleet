@@ -244,3 +244,13 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .history-tip { position: absolute; top: -4px; transform: translate(-50%, -100%); background: var(--ink); color: var(--card); font-size: .78em; font-weight: 700; padding: 3px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
 .history-tip[hidden] { display: none; }
 .history-empty { margin: 0; color: var(--soft); font-size: .85em; }
+
+/* Sign in */
+.sign-in { max-width: 26rem; margin: 12vh auto 0; padding: 0 16px; }
+.sign-in form, .change-password { display: grid; gap: 0.5rem; margin: 1rem 0; }
+.sign-in input, .change-password input { font: inherit; padding: 0.5rem; width: 100%; box-sizing: border-box; }
+.change-password label { display: grid; gap: 0.25rem; }
+.auth-message { min-height: 1.4em; }
+.account { margin-top: 0.5rem; }
+code { font-family: ui-monospace, monospace; }
+[hidden] { display: none !important; }

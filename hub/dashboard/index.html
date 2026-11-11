@@ -7,12 +7,24 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <section id="sign-in" class="sign-in" hidden>
+    <p class="brand">MindfulFleet</p>
+    <h1>Sign in to your fleet</h1>
+    <form id="sign-in-form">
+      <label for="sign-in-password">Dashboard password</label>
+      <input id="sign-in-password" type="password" autocomplete="current-password" maxlength="200" required>
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="sign-in-message" class="auth-message" role="alert" aria-live="assertive"></p>
+    <p class="help">Forgot it? On the hub, run <code>sudo mindful-fleet password</code> to choose a new one.</p>
+  </section>
   <header class="top">
     <div class="top-main">
       <p class="brand">MindfulFleet</p>
       <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
       <p id="fleet-power" class="fleet-power" hidden></p>
       <p id="connection" class="connection" role="status" hidden></p>
+      <p id="no-password" class="connection" role="status" hidden>No dashboard password yet, so anyone on your network can open this page. To set one, run <code>sudo mindful-fleet password</code> on the hub.</p>
       <p id="arrange-help" class="help" hidden>Drag cards to move them, or use the arrows and group menu on each card. Your layout is saved on the hub, so every browser sees it. Sizes stay per browser.</p>
     </div>
     <details id="settings" class="settings" open>
@@ -50,6 +62,17 @@
           </details>
           <button id="arrange" type="button" aria-pressed="false">Arrange cards</button>
         </div>
+        <details id="account" class="rows account" hidden>
+          <summary>Password and sign out</summary>
+          <form id="change-password" class="change-password">
+            <label>Current password <input id="current-password" type="password" autocomplete="current-password" maxlength="200" required></label>
+            <label>New password <input id="new-password" type="password" autocomplete="new-password" minlength="10" maxlength="200" required></label>
+            <label>New password again <input id="repeat-password" type="password" autocomplete="new-password" minlength="10" maxlength="200" required></label>
+            <button type="submit">Change password</button>
+            <p id="change-message" class="auth-message" role="status" aria-live="polite"></p>
+          </form>
+          <button id="sign-out" type="button">Sign out</button>
+        </details>
         <form id="new-group" class="new-group" hidden>
           <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
           <button type="submit">Add group</button>

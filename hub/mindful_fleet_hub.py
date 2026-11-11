@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """MindfulFleet hub: receives reports and serves the dashboard. Standard library only."""
 import argparse
+import getpass
 import hmac
 import json
 import math
@@ -15,14 +16,16 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import auth  # noqa: E402
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.10"
+VERSION = "0.2.11"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -31,6 +34,7 @@ SAVE_EVERY_SECONDS = 300  # Every 5 minutes, to spare SD cards.
 UPDATE_CHECK_SECONDS = 6 * 3600
 RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/VERSION"
 MAX_LAYOUT_BYTES = 16 * 1024
+MAX_AUTH_BYTES = 1024
 HISTORY_READINGS = ("temp", "hashrate", "watts", "cpu", "fan", "memory", "clock", "sensor_watts")
 _VERSION_RE = re.compile(r"^\d+(\.\d+){1,3}$")
 DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
@@ -338,7 +342,8 @@ def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
             return
 
 
-def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
+def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
+    """passwords is an auth.Auth. Without one, or before a password is set, the dashboard is open, as before 0.3.0."""
     class Handler(BaseHTTPRequestHandler):
         server_version = "MindfulFleet"
         sys_version = ""
@@ -348,8 +353,10 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
         def log_message(self, *args):
             pass  # Reports arrive constantly. Logging them would wear out SD cards.
 
-        def _send(self, status, body, content_type="application/json"):
+        def _send(self, status, body, content_type="application/json", headers=()):
             self.send_response(status)
+            for name, value in headers:
+                self.send_header(name, value)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
@@ -359,11 +366,92 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
             if self.command != "HEAD":
                 self.wfile.write(body)
 
-        def _json(self, status, payload):
-            self._send(status, json.dumps(payload).encode())
+        def _json(self, status, payload, headers=()):
+            self._send(status, json.dumps(payload).encode(), headers=headers)
+
+        def _session(self):
+            try:
+                morsel = SimpleCookie(self.headers.get("Cookie", "")).get(auth.COOKIE)
+            except CookieError:
+                return None
+            return morsel.value if morsel else None
+
+        def _signed_in(self):
+            return passwords is None or passwords.session_ok(self._session())
+
+        def _refuse_signed_out(self):
+            self._json(401, {"error": "sign in"})
+
+        def _same_site(self):
+            """Browsers name the page that sent a POST or PUT. Refuse any that came from another site."""
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True
+            host = self.headers.get("Host", "")
+            return origin in (f"http://{host}", f"https://{host}")
+
+        def _read_json(self, limit):
+            """Returns the parsed body, or None after sending the refusal."""
+            if not self.headers.get("Content-Type", "").startswith("application/json") or not self._same_site():
+                self.close_connection = True
+                self._json(404, {"error": "not found"})
+                return None
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.close_connection = True
+                self._json(411, {"error": "length required"})
+                return None
+            if not 0 < length <= limit:
+                self.close_connection = True
+                self._json(413, {"error": "too large"})
+                return None
+            try:
+                return json.loads(self.rfile.read(length))
+            except (ValueError, UnicodeDecodeError):
+                self._json(400, {"error": "bad request"})
+                return None
+
+        def _cookie(self, value, max_age):
+            return ("Set-Cookie", f"{auth.COOKIE}={value}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Strict")
+
+        def _auth_post(self, path):
+            body = self._read_json(MAX_AUTH_BYTES)
+            if body is None:
+                return
+            if not isinstance(body, dict):
+                return self._json(400, {"error": "bad request"})
+            address = self.client_address[0]
+            if path == "/api/sign-out":
+                passwords.sign_out(self._session())
+                return self._json(200, {"ok": True}, headers=[self._cookie("", 0)])
+            if not passwords.has_password():
+                return self._json(409, {"error": "No password yet. Set one on the hub: sudo mindful-fleet password"})
+            if path == "/api/sign-in":
+                session, wait = passwords.sign_in(body.get("password"), address)
+                if session:
+                    return self._json(200, {"ok": True}, headers=[self._cookie(session, auth.SESSION_SECONDS)])
+                if wait:
+                    return self._json(429, {"error": "Too many wrong tries.", "wait": wait},
+                                      headers=[("Retry-After", str(wait))])
+                return self._json(401, {"error": "That password didn't work."})
+            if not self._signed_in():
+                return self._refuse_signed_out()
+            session, problem = passwords.change(body.get("current"), body.get("new"), address)
+            if session:
+                return self._json(200, {"ok": True}, headers=[self._cookie(session, auth.SESSION_SECONDS)])
+            text, wait = problem
+            if wait:
+                return self._json(429, {"error": text, "wait": wait}, headers=[("Retry-After", str(wait))])
+            return self._json(400, {"error": text})
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            if path == "/api/auth":
+                return self._json(200, {"password_set": bool(passwords and passwords.has_password()),
+                                        "signed_in": self._signed_in()})
+            if path.startswith("/api/") and not self._signed_in():
+                return self._refuse_signed_out()
             if path == "/api/fleet":
                 self._json(200, fleet.snapshot())
             elif path == "/api/history":
@@ -388,20 +476,18 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
 
         def do_PUT(self):
             # Browsers can't send this from another site without asking first, and the hub never says yes.
-            if self.path != "/api/layout" or not self.headers.get("Content-Type", "").startswith("application/json"):
+            if self.path != "/api/layout":
                 self.close_connection = True
                 return self._json(404, {"error": "not found"})
-            try:
-                length = int(self.headers.get("Content-Length", ""))
-            except ValueError:
+            if not self._signed_in():
                 self.close_connection = True
-                return self._json(411, {"error": "length required"})
-            if not 0 < length <= MAX_LAYOUT_BYTES:
-                self.close_connection = True
-                return self._json(413, {"error": "layout too large"})
+                return self._refuse_signed_out()
+            body = self._read_json(MAX_LAYOUT_BYTES)
+            if body is None:
+                return
             try:
-                layout = clean_layout(json.loads(self.rfile.read(length)))
-            except (ValueError, UnicodeDecodeError) as error:
+                layout = clean_layout(body)
+            except ValueError as error:
                 return self._json(400, {"error": str(error)})
             try:
                 fleet.save_layout(layout)
@@ -411,6 +497,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR):
 
         def do_POST(self):
             # Read errors close the connection, since the body may be unread.
+            if passwords is not None and self.path in ("/api/sign-in", "/api/sign-out", "/api/password"):
+                return self._auth_post(self.path)
             if self.path != "/api/report":
                 self.close_connection = True
                 return self._json(404, {"error": "not found"})
@@ -510,6 +598,27 @@ def run_demo(fleet, stop):
             fleet.record(demo_report(name, temp, **kwargs))
 
 
+def set_password_here(passwords, parser, ask=getpass.getpass):
+    if passwords is None:
+        parser.error("set MINDFUL_FLEET_STATE so the hub knows where to keep the password")
+    print(f"Choose the dashboard password. At least {auth.MIN_LENGTH} characters; a short sentence works well.")
+    print("Nothing shows on screen while you type.")
+    for _ in range(3):
+        first = ask("New password: ")
+        problem = auth.password_problem(first)
+        if problem:
+            print(problem)
+            continue
+        if ask("Type it again: ") != first:
+            print("Those didn't match. Let's try again.")
+            continue
+        passwords.set_password(first)
+        print("Saved. Anyone signed in to the dashboard has been signed out.")
+        return 0
+    print("Password not changed.", file=sys.stderr)
+    return 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the MindfulFleet hub and dashboard.")
     parser.add_argument("--host", default=os.environ.get("MINDFUL_FLEET_HOST", "0.0.0.0"))  # noqa: S104 - the Pis on the network report to it
@@ -520,9 +629,15 @@ def main(argv=None):
     parser.add_argument("--no-update-check", action="store_true",
                         default=os.environ.get("MINDFUL_FLEET_UPDATE_CHECK", "on") == "off",
                         help="don't ask GitHub for the latest version")
+    parser.add_argument("--set-password", action="store_true",
+                        help="choose the dashboard password (use: sudo mindful-fleet password)")
     parser.add_argument("--version", action="version", version=VERSION)
     args = parser.parse_args(argv)
     token = os.environ.get("MINDFUL_FLEET_TOKEN")
+    passwords = auth.Auth(Path(args.state).with_name("password.json")) if args.state and not args.demo else None
+
+    if args.set_password:
+        return set_password_here(passwords, parser)
 
     if args.demo:
         args.host, args.state, token = "127.0.0.1", None, None
@@ -531,7 +646,7 @@ def main(argv=None):
 
     fleet = Fleet(args.state)
     stop = threading.Event()
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(fleet, token))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(fleet, token, passwords=passwords))
     server.daemon_threads = True
 
     def shut_down(*_):
@@ -556,6 +671,8 @@ def main(argv=None):
             threading.Thread(target=check_latest_version, args=(fleet, stop), daemon=True).start()
 
     print(f"MindfulFleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
+    if passwords and not passwords.has_password():
+        print("No dashboard password yet. Set one with: sudo mindful-fleet password", flush=True)
     server.serve_forever()
     try:
         fleet.save()
