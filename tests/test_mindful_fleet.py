@@ -450,12 +450,15 @@ class PasswordTests(unittest.TestCase):
         guard.begin(address)
         guard.finish(address, False)
 
-    def test_many_addresses_guessing_makes_wrong_guessers_wait(self):
+    def test_many_addresses_guessing_makes_new_addresses_wait_too(self):
         guard = auth.Guard(clock=lambda: 0.0)
+        guard.begin("owner")
+        guard.finish("owner", True)
         for n in range(auth.FLEET_WIDE_LIMIT):
             self.miss(guard, f"10.0.{n}.1")
         self.assertGreater(guard.wait_seconds("10.0.1.1"), 0)
-        self.assertEqual(guard.wait_seconds("10.9.9.9"), 0)
+        self.assertGreater(guard.wait_seconds("10.9.9.9"), 0)  # A brand-new address doesn't get round it.
+        self.assertEqual(guard.wait_seconds("owner"), 0)  # Somewhere that has signed in before still can.
 
     def test_wait_never_exceeds_five_minutes(self):
         now = [0.0]
@@ -523,6 +526,7 @@ class PasswordSafetyTests(unittest.TestCase):
 
     def test_owner_can_sign_in_while_others_are_braked(self):
         passwords, _ = self.make()
+        self.assertIsNotNone(passwords.sign_in("my pis run cool", "10.9.9.9")[0])
         for n in range(auth.FLEET_WIDE_LIMIT):
             passwords.sign_in("wrong guess!!", f"10.0.{n}.1")
         self.assertGreater(passwords.guard.wait_seconds("10.0.0.1"), 0)

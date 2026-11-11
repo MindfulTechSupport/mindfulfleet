@@ -25,6 +25,7 @@ FLEET_WIDE_WINDOW = 600
 FLEET_WIDE_WAIT = 30  # ... before every address that has guessed wrong waits this long between tries.
 BUSY_WAIT = 2  # Seconds to come back when another password is being checked.
 MAX_ADDRESSES = 1024
+MAX_TRUSTED = 64
 COOKIE = "mf_session"
 BROKEN = object()  # A password file exists but can't be read: refuse everything rather than open up.
 
@@ -102,8 +103,9 @@ def write_record(path, record):
 class Guard:
     """Slows down guessing. Each address gets a few free tries, then a wait that doubles each time, up to
     5 minutes; misses are forgotten after an hour. Only one guess per address is checked at a time. If many
-    guesses fail overall, every address that has guessed wrong waits a little, but someone who hasn't
-    (the owner, usually) can still sign in."""
+    guesses fail overall, every address waits a little between tries, except addresses that have signed in
+    before (the owner's own computers), so switching addresses doesn't help a guesser and the owner isn't
+    locked out."""
 
     def __init__(self, clock=time.time):
         self._clock = clock
@@ -111,6 +113,7 @@ class Guard:
         self._misses = {}  # address -> (count, wait until, last miss)
         self._recent = []  # times of recent misses from anyone
         self._checking = set()  # addresses with a guess being checked right now
+        self._trusted = {}  # addresses that have signed in, oldest first
 
     def _wait_locked(self, address, now):
         count, until, last = self._misses.get(address, (0, 0, 0))
@@ -119,7 +122,7 @@ class Guard:
             return 0
         wait = until - now
         self._recent = [t for t in self._recent if now - t < FLEET_WIDE_WINDOW]
-        if count and len(self._recent) >= FLEET_WIDE_LIMIT:
+        if address not in self._trusted and len(self._recent) >= FLEET_WIDE_LIMIT:
             wait = max(wait, self._recent[-1] + FLEET_WIDE_WAIT - now)
         return max(0, int(wait + 0.999))
 
@@ -144,6 +147,10 @@ class Guard:
             self._checking.discard(address)
             if good:
                 self._misses.pop(address, None)
+                self._trusted.pop(address, None)
+                self._trusted[address] = now
+                while len(self._trusted) > MAX_TRUSTED:
+                    self._trusted.pop(next(iter(self._trusted)))
                 return
             if address not in self._misses and len(self._misses) >= MAX_ADDRESSES:
                 self._misses.pop(next(iter(self._misses)))
@@ -187,18 +194,24 @@ class Auth:
             return None
         except OSError:
             return BROKEN
-        identity = (info.st_ino, info.st_mtime_ns, info.st_size)
         with self._lock:
-            if self._seen and self._seen[0] == identity:
+            if self._seen and self._seen[0] == self._identity(info):
                 return self._seen[1]
         try:
-            record = json.loads(self.path.read_text())
+            # Identity comes from the file actually read, so a change mid-read can't pair old and new.
+            with open(self.path, encoding="utf-8") as f:
+                identity = self._identity(os.fstat(f.fileno()))
+                record = json.loads(f.read())
         except (OSError, ValueError):
             return BROKEN
         if not valid_record(record):
             return BROKEN
         self._changed(identity, record)
         return record
+
+    @staticmethod
+    def _identity(info):
+        return info.st_ino, info.st_mtime_ns, info.st_size
 
     def _changed(self, identity, record=None):
         """Any change to the password file, including from the hub's command, signs everyone out."""
