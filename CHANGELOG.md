@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.10 (2026-11-10)
 
-- A code checker on GitHub runs on every change and every Monday: the tests on Python 3.11 and 3.13, Ruff, ShellCheck, ESLint, Gitleaks and Semgrep. Findings and what was done about each are in `docs/CHECKER_LOG.md`.
+- New name: MindfulFleet. The GitHub repository is now MindfulTechSupport/mindfulfleet; old links still work. The `mindful-fleet` command, its folders and its services keep their names, so installed computers carry on as before.
+- Installs and updates now come from the new repository address.
+- A code checker on GitHub runs on every change and every Monday: the tests on Python 3.11 and 3.13, Ruff, ShellCheck, ESLint, Gitleaks and Semgrep.
 - The reporter accepts only http:// or https:// addresses for the hub and XMRig.
 
 ## 0.2.9 (2026-11-10)

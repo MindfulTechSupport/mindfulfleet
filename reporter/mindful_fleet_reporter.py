@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mindful Fleet reporter: reads this computer's health and sends it to the hub.
+"""MindfulFleet reporter: reads this computer's health and sends it to the hub.
 
 Standard library only. Reads files under /proc and /sys, plus `vcgencmd get_throttled`.
 It only ever sends health numbers. It accepts no commands and opens no ports.
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
 
@@ -490,7 +490,7 @@ def send(hub_url, token, report, timeout=10):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Send this computer's health to a Mindful Fleet hub.")
+    parser = argparse.ArgumentParser(description="Send this computer's health to a MindfulFleet hub.")
     parser.add_argument("--hub", default=os.environ.get("MINDFUL_FLEET_HUB"),
                         help="hub address, for example http://192.168.1.10:8742")
     parser.add_argument("--interval", type=int,

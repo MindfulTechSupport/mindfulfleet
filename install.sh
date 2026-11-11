@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Mindful Fleet one-line installer. Downloads this project from GitHub and runs its installers.
+# MindfulFleet one-line installer. Downloads this project from GitHub and runs its installers.
 #   hub                 install the dashboard on this computer
 #   join HUB-URL TOKEN  install the reporter on this computer
 #   update              update whatever is installed here and keep its settings
 set -euo pipefail
 
-REPO="MindfulTechSupport/mindful-fleet"
+REPO="MindfulTechSupport/mindfulfleet"
 BRANCH="${MINDFUL_FLEET_CHANNEL:-release}"  # The release line only holds versions that are ready.
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }

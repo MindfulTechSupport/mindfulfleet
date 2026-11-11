@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mindful Fleet hub: receives reports and serves the dashboard. Standard library only."""
+"""MindfulFleet hub: receives reports and serves the dashboard. Standard library only."""
 import argparse
 import hmac
 import json
@@ -22,14 +22,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
 HISTORY_SAMPLES = 120  # 30 minutes at the default 15-second interval.
 SAVE_EVERY_SECONDS = 300  # Every 5 minutes, to spare SD cards.
 UPDATE_CHECK_SECONDS = 6 * 3600
-RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/VERSION"
+RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/VERSION"
 MAX_LAYOUT_BYTES = 16 * 1024
 HISTORY_READINGS = ("temp", "hashrate", "watts", "cpu", "fan", "memory", "clock", "sensor_watts")
 _VERSION_RE = re.compile(r"^\d+(\.\d+){1,3}$")
@@ -511,7 +511,7 @@ def run_demo(fleet, stop):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run the Mindful Fleet hub and dashboard.")
+    parser = argparse.ArgumentParser(description="Run the MindfulFleet hub and dashboard.")
     parser.add_argument("--host", default=os.environ.get("MINDFUL_FLEET_HOST", "0.0.0.0"))  # noqa: S104 - the Pis on the network report to it
     parser.add_argument("--port", type=int, default=int(os.environ.get("MINDFUL_FLEET_PORT", DEFAULT_PORT)))
     parser.add_argument("--state", default=os.environ.get("MINDFUL_FLEET_STATE"),
@@ -555,7 +555,7 @@ def main(argv=None):
         if not args.no_update_check:
             threading.Thread(target=check_latest_version, args=(fleet, stop), daemon=True).start()
 
-    print(f"Mindful Fleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
+    print(f"MindfulFleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
     server.serve_forever()
     try:
         fleet.save()

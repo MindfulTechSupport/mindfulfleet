@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mindful Fleet update control.
+# MindfulFleet update control.
 #   mindful-fleet status         show installed and latest versions, and the update setting
 #   mindful-fleet update         update now
 #   mindful-fleet hold           stop automatic updates on this computer
@@ -9,7 +9,7 @@
 #   mindful-fleet xmrig          turn on XMRig's read-only API so the dashboard shows hashrate
 set -euo pipefail
 
-REPO="MindfulTechSupport/mindful-fleet"
+REPO="MindfulTechSupport/mindfulfleet"
 CHANNEL="${MINDFUL_FLEET_CHANNEL:-release}"
 CONF=/etc/mindful-fleet/update.conf
 DROPIN=/etc/systemd/system/mindful-fleet-update.timer.d/interval.conf

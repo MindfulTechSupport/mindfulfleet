@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turns on XMRig's built-in web API so Mindful Fleet can show hashrate.
+"""Turns on XMRig's built-in web API so MindfulFleet can show hashrate.
 
 The API is set to listen only on this computer (127.0.0.1) and in restricted, read-only mode,
 so nothing on the network can reach it and it can't change the miner. Before changing anything,
@@ -92,7 +92,7 @@ def find_config(miner):
 def set_reporter(port, token):
     """Point the reporter at the API, then restart it."""
     if not os.path.isfile(REPORTER_ENV):
-        say("The Mindful Fleet reporter isn't installed here, so there's nothing to connect yet.")
+        say("The MindfulFleet reporter isn't installed here, so there's nothing to connect yet.")
         return
     with open(REPORTER_ENV) as f:
         lines = [line for line in f.read().splitlines() if not line.startswith("MINDFUL_FLEET_XMRIG")]
@@ -175,7 +175,7 @@ def main():
             sys.exit("No changes made.")
         os.makedirs(dropin_folder, exist_ok=True)
         with open(dropin, "w") as f:
-            f.write(f"# Added by Mindful Fleet. Delete this file and restart {miner['service']} to undo.\n"
+            f.write(f"# Added by MindfulFleet. Delete this file and restart {miner['service']} to undo.\n"
                     f"[Service]\nExecStart=\nExecStart={command}\n")
         subprocess.run(["systemctl", "daemon-reload"], check=False)  # noqa: S603, S607 - fixed systemctl command
         say(f"Saved. To undo, delete {dropin} and restart {miner['service']}.")

@@ -1,5 +1,5 @@
 // The code checker's rules for the dashboard's script (job "Dashboard - style and safety").
-// No packages to install: plain ESLint rules only. Every finding is fixed or explained in docs/CHECKER_LOG.md.
+// No packages to install: plain ESLint rules only. Every finding is fixed or explained in the project's code check log.
 const browser = Object.fromEntries([
   "window", "document", "localStorage", "fetch", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
   "requestAnimationFrame", "console", "Event", "URL", "navigator", "getComputedStyle", "matchMedia",

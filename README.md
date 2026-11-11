@@ -1,4 +1,4 @@
-# Mindful Fleet
+# MindfulFleet
 
 A friendly health dashboard that puts your whole fleet of small computers on one screen. Works with Raspberry Pi.
 
@@ -21,7 +21,7 @@ Then open http://127.0.0.1:8742/
 On the computer that will run the dashboard, paste:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- hub
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/install.sh | sudo bash -s -- hub
 ```
 
 It prints the dashboard address and a ready-made line for adding computers. Paste that line on every computer you want to watch, including that one. Each one shows up within about 15 seconds.
@@ -45,7 +45,7 @@ To control updates on a computer:
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- update
+curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/install.sh | sudo bash -s -- update
 ```
 
 Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
@@ -130,7 +130,7 @@ To drop one retired computer from the dashboard, stop the hub, remove that compu
 
 ## Run the tests
 
-The code checker on GitHub runs these tests and the style and security checkers on every change; see `docs/CHECKER_LOG.md`. To run the tests yourself:
+The code checker on GitHub (Actions → "Code checker") runs these tests and the style and security checkers on every change and every Monday. To run the tests yourself:
 
 ```
 python3 -m unittest discover -s tests
@@ -138,4 +138,4 @@ python3 -m unittest discover -s tests
 
 ## Trademark
 
-Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. Mindful Fleet is an independent project, not made or endorsed by Raspberry Pi Ltd.
+Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. MindfulFleet is an independent project, not made or endorsed by Raspberry Pi Ltd.

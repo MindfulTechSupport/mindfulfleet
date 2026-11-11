@@ -3,7 +3,7 @@
 
     python3 scripts/checker-summary.py semgrep reports/semgrep-scan.json
 
-Every finding is listed (rule, severity, file:line, message), so the checker log (docs/CHECKER_LOG.md)
+Every finding is listed (rule, severity, file:line, message), so the project's code check log
 can be written from the run's page. Missing or empty files are skipped. Standard library only.
 """
 import json

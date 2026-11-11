@@ -11,7 +11,7 @@ install -m 755 "$SOURCE/install/xmrig-api.py" /opt/mindful-fleet/xmrig-api.py
 
 cat > /etc/systemd/system/mindful-fleet-update.service <<'UNIT'
 [Unit]
-Description=Mindful Fleet update check
+Description=MindfulFleet update check
 After=network-online.target
 Wants=network-online.target
 
@@ -24,7 +24,7 @@ UNIT
 # "mindful-fleet every" changes the schedule with a separate file that updates don't touch.
 cat > /etc/systemd/system/mindful-fleet-update.timer <<'UNIT'
 [Unit]
-Description=Daily Mindful Fleet update check
+Description=Daily MindfulFleet update check
 
 [Timer]
 OnCalendar=daily

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the Mindful Fleet hub and dashboard as a service. Run with sudo.
+# Installs the MindfulFleet hub and dashboard as a service. Run with sudo.
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
@@ -32,7 +32,7 @@ chmod 640 /etc/mindful-fleet/hub.env
 
 cat > /etc/systemd/system/mindful-fleet-hub.service <<'EOF'
 [Unit]
-Description=Mindful Fleet hub and dashboard
+Description=MindfulFleet hub and dashboard
 After=network-online.target
 Wants=network-online.target
 
@@ -65,4 +65,4 @@ echo "Dashboard:  http://$IP:$PORT/"
 echo "Fleet token (keep this private):  $TOKEN"
 echo
 echo "To add a computer, including this one, paste this line on it:"
-echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindful-fleet/release/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"
+echo "curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/install.sh | sudo bash -s -- join http://$IP:$PORT $TOKEN"

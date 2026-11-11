@@ -1,5 +1,5 @@
 # The code checker's Python rules (job "Python - tests and style"). Every finding is fixed or explained
-# in docs/CHECKER_LOG.md. E/W/F: mistakes and unused code. B: likely bugs. S: security patterns (Bandit).
+# in the project's code check log. E/W/F: mistakes and unused code. B: likely bugs. S: security patterns (Bandit).
 target-version = "py311" # Raspberry Pi OS 12 (Bookworm) ships Python 3.11
 line-length = 140
 

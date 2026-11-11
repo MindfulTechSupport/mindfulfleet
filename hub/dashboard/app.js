@@ -484,7 +484,7 @@ function readings(pi) {
   row("uptime", "Running for", el("dd", "", duration(pi.uptime_s)));
   if (pi.os_name || pi.kernel) {
     const system = text({ level: "", text: pi.os_name || "Unknown" }, pi.kernel ? `kernel ${pi.kernel}` : "");
-    if (pi.reporter_version) system.appendChild(el("small", "detail", `Mindful Fleet ${pi.reporter_version}`));
+    if (pi.reporter_version) system.appendChild(el("small", "detail", `MindfulFleet ${pi.reporter_version}`));
     if (versionBelow(pi.reporter_version, latestVersion)) {
       system.appendChild(el("small", "detail update", `Update available: ${latestVersion}`));
     }
@@ -1012,7 +1012,7 @@ async function refresh() {
     document.getElementById("empty").hidden = pis.length > 0;
     document.getElementById("summary").textContent = pis.length ? headline(pis) : "Your fleet is empty.";
 
-    document.title = pis.some((pi) => pi.health.status !== "ok") ? "⚠ Mindful Fleet" : "Mindful Fleet";
+    document.title = pis.some((pi) => pi.health.status !== "ok") ? "⚠ MindfulFleet" : "MindfulFleet";
     if (!busyEditing()) render();
   } catch {
     connection.textContent = "Can't reach the hub. These numbers may be out of date. Retrying every 5 seconds.";

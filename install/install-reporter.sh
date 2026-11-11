@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the Mindful Fleet reporter as a service. Run with sudo.
+# Installs the MindfulFleet reporter as a service. Run with sudo.
 # Usage: sudo ./install-reporter.sh http://HUB-ADDRESS:8742
 # It reads the fleet token from MINDFUL_FLEET_TOKEN, reuses an installed one, or asks.
 set -euo pipefail
@@ -46,7 +46,7 @@ chmod 640 /etc/mindful-fleet/reporter.env
 # Device access stays on, because vcgencmd talks to the firmware through /dev/vcio.
 cat > /etc/systemd/system/mindful-fleet-reporter.service <<'EOF'
 [Unit]
-Description=Mindful Fleet reporter
+Description=MindfulFleet reporter
 After=network-online.target
 Wants=network-online.target
 
