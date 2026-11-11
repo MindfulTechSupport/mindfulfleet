@@ -818,6 +818,9 @@ function shareLayout() {
   layoutSaveTimer = setTimeout(() => {
     const shared = Object.fromEntries(SHARED_KEYS.map((key) => [key, layout[key]]));
     fetch("/api/layout", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(shared) })
+      .then((response) => {
+        if (response.status === 401) signedOut(); // This browser keeps its own copy until you sign in again.
+      })
       .catch(() => {}); // An older hub can't store layouts. This browser still keeps its own copy.
   }, 600);
 }
@@ -1005,11 +1008,12 @@ async function refresh() {
   try {
     const response = await fetch("/api/fleet", { cache: "no-store" });
     if (response.status === 401) {
-      showSignIn("");
+      signedOut();
       return;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { pis, latest_version: latest } = await response.json();
+    const { pis, latest_version: latest, password_set: passwordSet } = await response.json();
+    setUpAccount(!!passwordSet);
     latestPis = pis;
     latestVersion = latest;
     connection.hidden = true;
@@ -1176,6 +1180,7 @@ function setUpTools() {
 
 // Signing in. The password goes only to the hub; the browser keeps a sign-in cookie it can't read from scripts.
 let started = false;
+let refreshTimer = null;
 
 async function sendJson(path, body) {
   const response = await fetch(path, {
@@ -1196,6 +1201,13 @@ function waitWords(data) {
   if (!data.wait) return "";
   const minutes = Math.ceil(data.wait / 60);
   return data.wait < 60 ? ` Try again in ${data.wait} seconds.` : ` Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
+// Signed out while the page was open (hub restart, or a new password): stop refreshing and ask once.
+function signedOut() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
+  if (document.getElementById("sign-in").hidden) showSignIn("Please sign in again.");
 }
 
 function showSignIn(message) {
@@ -1271,15 +1283,18 @@ function setUpSignIn() {
 }
 
 function start() {
-  if (started) {
+  const keepRefreshing = () => {
     refresh();
+    if (!refreshTimer) refreshTimer = setInterval(refresh, REFRESH_MS);
+  };
+  if (started) {
+    keepRefreshing();
     return;
   }
   started = true;
   loadSharedLayout().finally(() => {
     setUpTools();
-    refresh();
-    setInterval(refresh, REFRESH_MS);
+    keepRefreshing();
   });
 }
 

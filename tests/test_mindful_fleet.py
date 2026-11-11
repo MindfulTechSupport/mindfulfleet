@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -430,30 +431,38 @@ class PasswordTests(unittest.TestCase):
         now = [0.0]
         guard = auth.Guard(clock=lambda: now[0])
         for _ in range(auth.FREE_TRIES - 1):
-            guard.missed("10.0.0.9")
+            self.miss(guard, "10.0.0.9")
         self.assertEqual(guard.wait_seconds("10.0.0.9"), 0)
-        guard.missed("10.0.0.9")
+        self.miss(guard, "10.0.0.9")
         first = guard.wait_seconds("10.0.0.9")
         self.assertGreater(first, 0)
         now[0] += first
-        guard.missed("10.0.0.9")
+        self.miss(guard, "10.0.0.9")
         self.assertGreater(guard.wait_seconds("10.0.0.9"), first)
         self.assertEqual(guard.wait_seconds("10.0.0.10"), 0)
-        guard.passed("10.0.0.9")
+        now[0] += auth.MAX_WAIT_SECONDS
+        self.assertEqual(guard.begin("10.0.0.9"), 0)
+        guard.finish("10.0.0.9", True)
         self.assertEqual(guard.wait_seconds("10.0.0.9"), 0)
 
-    def test_many_addresses_guessing_makes_everyone_wait(self):
+    @staticmethod
+    def miss(guard, address):
+        guard.begin(address)
+        guard.finish(address, False)
+
+    def test_many_addresses_guessing_makes_wrong_guessers_wait(self):
         guard = auth.Guard(clock=lambda: 0.0)
         for n in range(auth.FLEET_WIDE_LIMIT):
-            guard.missed(f"10.0.{n}.1")
-        self.assertGreater(guard.wait_seconds("10.9.9.9"), 0)
+            self.miss(guard, f"10.0.{n}.1")
+        self.assertGreater(guard.wait_seconds("10.0.1.1"), 0)
+        self.assertEqual(guard.wait_seconds("10.9.9.9"), 0)
 
     def test_wait_never_exceeds_five_minutes(self):
         now = [0.0]
         guard = auth.Guard(clock=lambda: now[0])
         for _ in range(40):
             now[0] += 1000
-            guard.missed("a")
+            self.miss(guard, "a")
         self.assertLessEqual(guard.wait_seconds("a"), auth.MAX_WAIT_SECONDS)
 
     def test_command_sets_password_and_file_is_private(self):
@@ -465,6 +474,98 @@ class PasswordTests(unittest.TestCase):
         self.assertEqual(os.stat(Path(folder, "password.json")).st_mode & 0o777, 0o600)
         token, _ = passwords.sign_in("my pis run cool", "a")
         self.assertTrue(passwords.session_ok(token))
+
+
+class PasswordSafetyTests(unittest.TestCase):
+    """From the independent review of 0.2.11 (C-012)."""
+
+    def make(self, clock=None):
+        folder = tempfile.mkdtemp()
+        passwords = auth.Auth(Path(folder, "password.json"), clock=clock or time.time, iterations=1000)
+        passwords.set_password("my pis run cool")
+        return passwords, Path(folder, "password.json")
+
+    def test_unreadable_password_file_locks_rather_than_opens(self):
+        passwords, path = self.make()
+        token, _ = passwords.sign_in("my pis run cool", "a")
+        for broken in ("", "{not json", json.dumps({"hash": "zz"}), json.dumps([1])):
+            with self.subTest(broken=broken):
+                path.write_text(broken)
+                self.assertTrue(passwords.has_password())
+                self.assertTrue(passwords.unreadable())
+                self.assertFalse(passwords.session_ok(None))
+                self.assertFalse(passwords.session_ok(token))
+                self.assertEqual(passwords.sign_in("my pis run cool", "a")[0], None)
+
+    def test_only_a_missing_file_means_no_password(self):
+        passwords, path = self.make()
+        path.unlink()
+        self.assertFalse(passwords.has_password())
+        self.assertTrue(passwords.session_ok(None))
+
+    def test_guesses_sent_together_are_checked_one_at_a_time(self):
+        passwords, _ = self.make()
+        checked = []
+        real = auth.check_password
+
+        def slow(password, record):
+            checked.append(password)
+            time.sleep(0.05)
+            return real(password, record)
+        auth.check_password = slow
+        self.addCleanup(setattr, auth, "check_password", real)
+        threads = [threading.Thread(target=passwords.sign_in, args=("wrong guess!!", "attacker")) for _ in range(40)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertLessEqual(len(checked), auth.FREE_TRIES)
+
+    def test_owner_can_sign_in_while_others_are_braked(self):
+        passwords, _ = self.make()
+        for n in range(auth.FLEET_WIDE_LIMIT):
+            passwords.sign_in("wrong guess!!", f"10.0.{n}.1")
+        self.assertGreater(passwords.guard.wait_seconds("10.0.0.1"), 0)
+        self.assertIsNotNone(passwords.sign_in("my pis run cool", "10.9.9.9")[0])
+
+    def test_wrong_guesses_are_forgotten_after_an_hour(self):
+        now = [0.0]
+        guard = auth.Guard(clock=lambda: now[0])
+        for _ in range(auth.FREE_TRIES + 2):
+            guard.begin("a")
+            guard.finish("a", False)
+        self.assertGreater(guard.wait_seconds("a"), 0)
+        now[0] += auth.FORGET_MISSES_AFTER + 1
+        self.assertEqual(guard.wait_seconds("a"), 0)
+
+    def test_new_password_from_the_hub_clears_the_waits(self):
+        passwords, _ = self.make()
+        for _ in range(auth.FREE_TRIES + 1):
+            passwords.sign_in("wrong guess!!", "owner")
+        self.assertGreater(passwords.guard.wait_seconds("owner"), 0)
+        time.sleep(0.01)
+        auth.Auth(passwords.path, iterations=1000).set_password("a fresh start here")
+        self.assertIsNotNone(passwords.sign_in("a fresh start here", "owner")[0])
+
+    def test_putting_an_old_password_file_back_doesnt_revive_old_sessions(self):
+        passwords, path = self.make()
+        token, _ = passwords.sign_in("my pis run cool", "a")
+        kept = path.with_name("password.json.off")
+        path.rename(kept)
+        self.assertTrue(passwords.session_ok(None))
+        kept.rename(path)
+        self.assertFalse(passwords.session_ok(token))
+
+    def test_odd_characters_dont_crash(self):
+        passwords, _ = self.make()
+        self.assertFalse(auth.check_password("\ud800", auth.hash_password("x" * 10, iterations=1000)))
+        self.assertIsNotNone(auth.password_problem("\ud800" * 12))
+        self.assertIsNone(passwords.sign_in("\ud800", "a")[0])
+
+    def test_file_is_private_and_fully_written(self):
+        _, path = self.make()
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertTrue(auth.valid_record(json.loads(path.read_text())))
 
 
 class SignInTests(unittest.TestCase):
@@ -582,6 +683,23 @@ class SignInTests(unittest.TestCase):
                                          headers={"Authorization": "Bearer secret"})
         with urllib.request.urlopen(request) as response:
             self.assertEqual(response.status, 200)
+
+    def test_other_apps_cookies_dont_hide_ours(self):
+        _, session, _ = self.sign_in()
+        for header in (f'other={{"a":1}}; {auth.COOKIE}={session}', f"pihole=a b; {auth.COOKIE}={session}"):
+            with self.subTest(header=header):
+                self.assertEqual(self.call("/api/fleet", headers={"Cookie": header})[0], 200)
+
+    def test_unreadable_password_file_refuses_everyone(self):
+        _, session, _ = self.sign_in()
+        Path(self.folder, "password.json").write_text("")
+        self.assertEqual(self.call("/api/fleet")[0], 401)
+        self.assertEqual(self.call("/api/fleet", cookie=session)[0], 401)
+        self.assertEqual(self.call("/api/sign-in", {"password": "my pis run cool"})[0], 503)
+
+    def test_fleet_says_whether_a_password_is_set(self):
+        _, session, _ = self.sign_in()
+        self.assertTrue(self.call("/api/fleet", cookie=session)[1]["password_set"])
 
     def test_no_password_yet_keeps_the_dashboard_open(self):
         Path(self.folder, "password.json").unlink()

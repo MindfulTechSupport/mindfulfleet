@@ -16,7 +16,6 @@ import time
 import urllib.parse
 import urllib.request
 from collections import deque
-from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -370,11 +369,13 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
             self._send(status, json.dumps(payload).encode(), headers=headers)
 
         def _session(self):
-            try:
-                morsel = SimpleCookie(self.headers.get("Cookie", "")).get(auth.COOKIE)
-            except CookieError:
-                return None
-            return morsel.value if morsel else None
+            # Read by hand: one odd cookie from another app on this computer mustn't hide ours.
+            for header in self.headers.get_all("Cookie") or []:
+                for part in header.split(";"):
+                    name, _, value = part.strip().partition("=")
+                    if name == auth.COOKIE and value:
+                        return value
+            return None
 
         def _signed_in(self):
             return passwords is None or passwords.session_ok(self._session())
@@ -427,6 +428,9 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
                 return self._json(200, {"ok": True}, headers=[self._cookie("", 0)])
             if not passwords.has_password():
                 return self._json(409, {"error": "No password yet. Set one on the hub: sudo mindful-fleet password"})
+            if passwords.unreadable():
+                return self._json(503, {"error": "The hub can't read its password file. "
+                                                 "On the hub, run: sudo mindful-fleet password"})
             if path == "/api/sign-in":
                 session, wait = passwords.sign_in(body.get("password"), address)
                 if session:
@@ -453,7 +457,7 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
             if path.startswith("/api/") and not self._signed_in():
                 return self._refuse_signed_out()
             if path == "/api/fleet":
-                self._json(200, fleet.snapshot())
+                self._json(200, {**fleet.snapshot(), "password_set": bool(passwords and passwords.has_password())})
             elif path == "/api/history":
                 query = urllib.parse.parse_qs(self.path.partition("?")[2])
                 pi_id = (query.get("id") or [""])[0]

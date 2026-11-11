@@ -85,9 +85,8 @@ case "${1:-status}" in
       echo "To turn it back on with the same password: sudo mv $KEPT $FILE"
       exit 0
     fi
+    # The hub's own code writes the file and hands it to the hub's account before putting it in place.
     MINDFUL_FLEET_STATE="$STATE" python3 /opt/mindful-fleet/hub/mindful_fleet_hub.py --set-password
-    chown mindful-fleet:mindful-fleet "$FILE"
-    chmod 600 "$FILE"
     ;;
   update)
     need_root
