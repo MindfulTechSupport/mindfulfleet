@@ -18,7 +18,7 @@ esac
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-curl -fsSL "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" | tar -xz -C "$WORK" --strip-components=1
+curl -fsSL --proto "=https" --tlsv1.2 "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" | tar -xz -C "$WORK" --strip-components=1
 
 case "$ACTION" in
   hub)

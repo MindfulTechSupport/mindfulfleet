@@ -11,7 +11,14 @@ import os
 import sys
 
 
+REPORTS = os.path.realpath("reports")
+
+
 def load(path):
+    # Only read reports the workflow wrote into ./reports, never a file elsewhere.
+    path = os.path.realpath(path)
+    if os.path.commonpath([path, REPORTS]) != REPORTS:
+        return None
     try:
         if os.path.getsize(path) == 0:
             return None
