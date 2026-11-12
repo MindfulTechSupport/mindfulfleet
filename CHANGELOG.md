@@ -7,6 +7,7 @@
 - The hub keeps only a salted hash of the password. Changing it signs out every other browser. `sudo mindful-fleet password off` turns it off and keeps the old one so it can be put back.
 - Until a password is set, the dashboard works as before and shows a reminder.
 - The hub refuses dashboard changes sent from other websites.
+- Controls size now goes down to 50% (was 60%).
 
 ## 0.2.10 (2026-11-10)
 
