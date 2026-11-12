@@ -87,8 +87,14 @@ def read_pmic(run=subprocess.run):
     except (OSError, subprocess.SubprocessError):
         return None, None
     amps, volts = {}, {}
-    for rail, kind, value in re.findall(r"(\S+)_([AV])\s+(?:current|volt)\(\d+\)=([\d.]+)[AV]", result.stdout):
-        (amps if kind == "A" else volts)[rail] = float(value)
+    for line in result.stdout.splitlines():
+        # "EXT5V_V volt(24)=5.1342V" or "VDD_CORE_A current(7)=1.2346A"
+        found = re.match(r"\s*(\S+)\s+(?:current|volt)\(\d+\)=([\d.]+)([AV])\s*$", line)
+        if not found or not found.group(1).endswith(("_A", "_V")):
+            continue
+        name, value, unit = found.groups()
+        if name[-1] == unit:
+            (amps if unit == "A" else volts)[name[:-2]] = float(value)
     input_volts = round(volts["EXT5V"], 2) if "EXT5V" in volts else None
     shared = amps.keys() & volts.keys()
     watts = round(sum(amps[rail] * volts[rail] for rail in shared), 2) if shared else None

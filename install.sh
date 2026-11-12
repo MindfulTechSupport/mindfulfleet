@@ -8,11 +8,11 @@ set -euo pipefail
 REPO="MindfulTechSupport/mindfulfleet"
 BRANCH="${MINDFUL_FLEET_CHANNEL:-release}"  # The release line only holds versions that are ready.
 
-[ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run with sudo." >&2; exit 1; }
 ACTION="${1:-}"
 case "$ACTION" in
   hub|update) ;;
-  join) [ $# -eq 3 ] || { echo "Usage: join HUB-URL TOKEN" >&2; exit 1; } ;;
+  join) [[ $# -eq 3 ]] || { echo "Usage: join HUB-URL TOKEN" >&2; exit 1; } ;;
   *) echo "Usage: install.sh hub | join HUB-URL TOKEN | update" >&2; exit 1 ;;
 esac
 
@@ -29,17 +29,17 @@ case "$ACTION" in
     ;;
   update)
     FOUND=no
-    if [ -f /etc/mindful-fleet/hub.env ]; then
+    if [[ -f /etc/mindful-fleet/hub.env ]]; then
       PORT="$(sed -n 's/^MINDFUL_FLEET_PORT=//p' /etc/mindful-fleet/hub.env)"
       bash "$WORK/install/install-hub.sh" "${PORT:-8742}" >/dev/null
       echo "Dashboard updated."
       FOUND=yes
     fi
-    if [ -f /etc/mindful-fleet/reporter.env ]; then
+    if [[ -f /etc/mindful-fleet/reporter.env ]]; then
       HUB="$(sed -n 's/^MINDFUL_FLEET_HUB=//p' /etc/mindful-fleet/reporter.env)"
       bash "$WORK/install/install-reporter.sh" "$HUB"
       FOUND=yes
     fi
-    [ "$FOUND" = yes ] || { echo "Nothing is installed here yet. Use hub or join." >&2; exit 1; }
+    [[ "$FOUND" = yes ]] || { echo "Nothing is installed here yet. Use hub or join." >&2; exit 1; }
     ;;
 esac

@@ -15,9 +15,9 @@ REPORTS = os.path.realpath("reports")
 
 
 def load(path):
-    # Only read reports the workflow wrote into ./reports, never a file elsewhere.
-    path = os.path.realpath(path)
-    if os.path.commonpath([path, REPORTS]) != REPORTS:
+    # Only read reports the workflow wrote into ./reports, by file name, never a file elsewhere.
+    path = os.path.realpath(os.path.join(REPORTS, os.path.basename(path)))
+    if os.path.dirname(path) != REPORTS:
         return None
     try:
         if os.path.getsize(path) == 0:

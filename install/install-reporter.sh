@@ -4,7 +4,7 @@
 # It reads the fleet token from MINDFUL_FLEET_TOKEN, reuses an installed one, or asks.
 set -euo pipefail
 
-[ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run with sudo." >&2; exit 1; }
 SOURCE="$(cd "$(dirname "$0")/.." && pwd)"
 HUB="${1:-}"
 case "$HUB" in
@@ -13,13 +13,13 @@ case "$HUB" in
 esac
 
 TOKEN="${MINDFUL_FLEET_TOKEN:-}"
-if [ -z "$TOKEN" ] && [ -f /etc/mindful-fleet/reporter.env ]; then
+if [[ -z "$TOKEN" ]] && [[ -f /etc/mindful-fleet/reporter.env ]]; then
   TOKEN="$(sed -n 's/^MINDFUL_FLEET_TOKEN=//p' /etc/mindful-fleet/reporter.env)"
 fi
-if [ -z "$TOKEN" ]; then
+if [[ -z "$TOKEN" ]]; then
   read -rp "Fleet token: " TOKEN </dev/tty
 fi
-[ -n "$TOKEN" ] || { echo "A fleet token is required." >&2; exit 1; }
+[[ -n "$TOKEN" ]] || { echo "A fleet token is required." >&2; exit 1; }
 
 id mindful-fleet >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin mindful-fleet
 # vcgencmd, which reports throttling, needs the video group.
@@ -34,13 +34,13 @@ install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
 umask 027
 # Keep any other settings someone added, such as sensor names or the XMRig address.
 EXTRA=""
-if [ -f /etc/mindful-fleet/reporter.env ]; then
+if [[ -f /etc/mindful-fleet/reporter.env ]]; then
   EXTRA="$(grep -vE '^MINDFUL_FLEET_(HUB|TOKEN)=' /etc/mindful-fleet/reporter.env || true)"
 fi
 {
   echo "MINDFUL_FLEET_HUB=$HUB"
   echo "MINDFUL_FLEET_TOKEN=$TOKEN"
-  if [ -n "$EXTRA" ]; then printf '%s\n' "$EXTRA"; fi
+  if [[ -n "$EXTRA" ]]; then printf '%s\n' "$EXTRA"; fi
 } > /etc/mindful-fleet/reporter.env
 chown root:mindful-fleet /etc/mindful-fleet/reporter.env
 chmod 640 /etc/mindful-fleet/reporter.env

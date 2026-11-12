@@ -1,3 +1,4 @@
+import io
 import json
 import subprocess
 import os
@@ -10,6 +11,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter"), str(ROOT / "tools")]
@@ -754,7 +756,7 @@ class WifiWatchdogTests(unittest.TestCase):
         state_dir = tools.STATE_DIR
         tools.STATE_DIR = Path(folder, "state")
         self.addCleanup(setattr, tools, "STATE_DIR", state_dir)
-        self.assertEqual(tools.wifi_check(route_file=route), 0)
+        self.assertIsNone(tools.wifi_check(route_file=route))
         self.assertFalse(Path(tools.STATE_DIR, "wifi-watchdog.json").exists())  # It didn't even ping.
 
 
@@ -779,7 +781,7 @@ class TidyTests(unittest.TestCase):
         real = tools.run
         tools.run = lambda args, timeout=60: (calls.append(args), (False, ""))[1]
         self.addCleanup(setattr, tools, "run", real)
-        self.assertEqual(tools.tidy(yes=False, root=tempfile.gettempdir()), 0)
+        self.assertIsNone(tools.tidy(yes=False, root=tempfile.gettempdir()))
         self.assertEqual([c for c in calls if c[0] in ("apt-get", "systemctl")], [])
         self.assertFalse(tools.JOURNAL_CAP.exists())
 
@@ -916,6 +918,15 @@ class FindMyPisHubTests(unittest.TestCase):
         self.assertEqual(len(body["found"]), 2)
         self.assertEqual(self.seen, [{"192.168.1.41": "attic-pi"}])
 
+
+
+class ToolsCommandTests(unittest.TestCase):
+    def test_exit_codes(self):
+        with mock.patch.object(tools, "tidy_undo") as undo:
+            self.assertEqual(tools.main(["tidy-undo"]), 0)
+        undo.assert_called_once()
+        with mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(tools.main(["nonsense"]), 2)
 
 class XmrigTests(unittest.TestCase):
     def serve(self, routes, token=None):

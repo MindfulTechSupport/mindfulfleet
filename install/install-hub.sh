@@ -2,7 +2,7 @@
 # Installs the MindfulFleet hub and dashboard as a service. Run with sudo.
 set -euo pipefail
 
-[ "$(id -u)" -eq 0 ] || { echo "Please run with sudo." >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Please run with sudo." >&2; exit 1; }
 SOURCE="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${1:-8742}"
 case "$PORT" in ''|*[!0-9]*) echo "Port must be a number." >&2; exit 1 ;; esac
@@ -16,7 +16,7 @@ chmod 755 /opt/mindful-fleet/hub/mindful_fleet_hub.py
 install -m 644 "$SOURCE"/hub/dashboard/* /opt/mindful-fleet/hub/dashboard/
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
-if [ -f /etc/mindful-fleet/hub.env ]; then
+if [[ -f /etc/mindful-fleet/hub.env ]]; then
   TOKEN="$(sed -n 's/^MINDFUL_FLEET_TOKEN=//p' /etc/mindful-fleet/hub.env)"
 else
   TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -64,7 +64,7 @@ echo "Hub installed."
 echo "Dashboard:  http://$IP:$PORT/"
 echo "Fleet token (keep this private):  $TOKEN"
 echo
-if [ ! -f /var/lib/mindful-fleet/password.json ]; then
+if [[ ! -f /var/lib/mindful-fleet/password.json ]]; then
   echo "Next, give the dashboard a password, so only you can open it:"
   echo "  sudo mindful-fleet password"
   echo

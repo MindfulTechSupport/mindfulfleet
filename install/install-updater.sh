@@ -7,7 +7,7 @@ install -d -m 755 /opt/mindful-fleet /etc/mindful-fleet
 install -m 644 "$SOURCE/VERSION" /opt/mindful-fleet/VERSION
 install -m 755 "$SOURCE/install/mindful-fleet" /usr/local/bin/mindful-fleet
 install -m 755 "$SOURCE/install/xmrig-api.py" /opt/mindful-fleet/xmrig-api.py
-[ -f /etc/mindful-fleet/update.conf ] || printf 'AUTO_UPDATE=on\nSKIP_VERSION=\nINTERVAL=daily\n' > /etc/mindful-fleet/update.conf
+[[ -f /etc/mindful-fleet/update.conf ]] || printf 'AUTO_UPDATE=on\nSKIP_VERSION=\nINTERVAL=daily\n' > /etc/mindful-fleet/update.conf
 
 cat > /etc/systemd/system/mindful-fleet-update.service <<'UNIT'
 [Unit]

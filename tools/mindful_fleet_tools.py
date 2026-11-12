@@ -88,7 +88,7 @@ def tidy(yes=None, root="/"):
     print(f"  System log: {human(logs) if logs is not None else 'unknown'} (keeps the newest {JOURNAL_KEEP})")
     if not ask("Clear these now?", yes):
         print("Nothing changed.")
-        return 0
+        return
     run(["apt-get", "clean"], timeout=300)
     run(["journalctl", f"--vacuum-size={JOURNAL_KEEP}"], timeout=300)
     if not JOURNAL_CAP.exists() and ask(
@@ -99,17 +99,15 @@ def tidy(yes=None, root="/"):
         print(f"Log cap added ({JOURNAL_CAP}). Undo: sudo mindful-fleet tidy undo")
     after = shutil.disk_usage(root).free
     print(f"Free space now: {human(after)} ({human(max(0, after - before))} freed)")
-    return 0
 
 
 def tidy_undo():
     if not JOURNAL_CAP.exists():
         print("There's no log cap to remove.")
-        return 0
+        return
     JOURNAL_CAP.unlink()
     run(["systemctl", "restart", "systemd-journald"])
     print("Log cap removed; the system log uses its normal limit again.")
-    return 0
 
 
 # ---------- Wi-Fi watchdog ----------
@@ -158,7 +156,7 @@ def restart_wifi(interface):
 def wifi_check(now=None, route_file="/proc/net/route"):
     interface, gateway = default_route(route_file)
     if not interface or not interface.startswith("wl"):
-        return 0  # Not using Wi-Fi right now (cable, or no network at all): nothing for the watchdog to do.
+        return  # Not using Wi-Fi right now (cable, or no network at all): nothing for the watchdog to do.
     path = STATE_DIR / "wifi-watchdog.json"
     try:
         state = json.loads(path.read_text())
@@ -175,18 +173,16 @@ def wifi_check(now=None, route_file="/proc/net/route"):
     path.write_text(json.dumps(state))
     if action == "reboot":
         run(["systemctl", "reboot"])
-    return 0
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     command = argv[0] if argv else ""
-    if command == "tidy":
-        return tidy(yes=True if "--yes" in argv else None)
-    if command == "tidy-undo":
-        return tidy_undo()
-    if command == "wifi-check":
-        return wifi_check()
+    commands = {"tidy": lambda: tidy(yes=True if "--yes" in argv else None), "tidy-undo": tidy_undo,
+                "wifi-check": wifi_check}
+    if command in commands:
+        commands[command]()
+        return 0
     print("Usage: mindful_fleet_tools.py tidy [--yes] | tidy-undo | wifi-check", file=sys.stderr)
     return 2
 
