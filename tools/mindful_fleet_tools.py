@@ -7,8 +7,10 @@ Standard library only. Called by the `mindful-fleet` command (as root):
     mindful_fleet_tools.py wifi-check
 """
 import glob
+import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess  # nosec B404 - fixed commands only, never a shell
 import sys
@@ -23,6 +25,7 @@ JOURNAL_KEEP = "100M"
 MISSES_BEFORE_RESTART = 3  # One check every 2 minutes, so about 6 minutes without the router.
 RESTARTS_BEFORE_REBOOT = 3
 REBOOT_GAP = 3600  # Never reboot more than once an hour.
+WIFI_NAME = re.compile(r"wl[A-Za-z0-9_.-]{0,13}")
 
 
 # ---------- shared ----------
@@ -121,8 +124,11 @@ def default_route(route_file="/proc/net/route"):
     for line in lines:
         fields = line.split()
         if len(fields) > 2 and fields[1] == "00000000":
-            gateway = bytes.fromhex(fields[2])[::-1]
-            return fields[0], ".".join(str(b) for b in gateway)
+            try:
+                gateway = ipaddress.IPv4Address(bytes.fromhex(fields[2])[::-1])
+            except ValueError:
+                continue
+            return fields[0], str(gateway)
     return None, None
 
 
@@ -155,7 +161,8 @@ def restart_wifi(interface):
 
 def wifi_check(now=None, route_file="/proc/net/route"):
     interface, gateway = default_route(route_file)
-    if not interface or not interface.startswith("wl"):
+    # Only a Wi-Fi interface with a plain Linux name (at most 15 letters, digits, "_", "." or "-") is touched.
+    if not interface or not WIFI_NAME.fullmatch(interface):
         return  # Not using Wi-Fi right now (cable, or no network at all): nothing for the watchdog to do.
     path = STATE_DIR / "wifi-watchdog.json"
     try:

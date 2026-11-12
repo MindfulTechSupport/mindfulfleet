@@ -921,6 +921,15 @@ class FindMyPisHubTests(unittest.TestCase):
 
 
 class ToolsCommandTests(unittest.TestCase):
+    def test_watchdog_ignores_odd_interface_names(self):
+        folder = tempfile.mkdtemp()
+        for name in ("wl;reboot", "wlan0-with-a-very-long-name", "eth0"):
+            route = Path(folder, "route")
+            route.write_text("Iface\tDestination\tGateway\n" + f"{name}\t00000000\t0101A8C0\n")
+            with self.subTest(name=name), mock.patch.object(tools, "run") as run:
+                tools.wifi_check(route_file=str(route))
+                run.assert_not_called()
+
     def test_exit_codes(self):
         with mock.patch.object(tools, "tidy_undo") as undo:
             self.assertEqual(tools.main(["tidy-undo"]), 0)
