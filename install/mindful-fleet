@@ -9,6 +9,8 @@
 #   mindful-fleet xmrig          turn on XMRig's read-only API so the dashboard shows hashrate
 #   mindful-fleet password       choose or change the dashboard password (on the hub)
 #   mindful-fleet password off   turn the dashboard password off (on the hub)
+#   mindful-fleet tidy           free up space (asks first); 'tidy undo' removes the log cap it can add
+#   mindful-fleet wifi-watchdog on|off|status   reconnect Wi-Fi by itself when this Pi loses the router
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindfulfleet"
@@ -88,6 +90,55 @@ case "${1:-status}" in
     # The hub's own code writes the file and hands it to the hub's account before putting it in place.
     MINDFUL_FLEET_STATE="$STATE" python3 /opt/mindful-fleet/hub/mindful_fleet_hub.py --set-password
     ;;
+  tidy)
+    need_root
+    TOOLS=/opt/mindful-fleet/tools/mindful_fleet_tools.py
+    [ -f "$TOOLS" ] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+    if [ "${2:-}" = "undo" ]; then python3 "$TOOLS" tidy-undo; else python3 "$TOOLS" tidy; fi
+    ;;
+  wifi-watchdog)
+    UNIT=mindful-fleet-wifi-watchdog
+    case "${2:-status}" in
+      on)
+        need_root
+        [ -f /opt/mindful-fleet/tools/mindful_fleet_tools.py ] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+        cat > "/etc/systemd/system/$UNIT.service" <<'EOF'
+[Unit]
+Description=MindfulFleet Wi-Fi watchdog (reconnects Wi-Fi when the router can't be reached)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/mindful-fleet/tools/mindful_fleet_tools.py wifi-check
+EOF
+        cat > "/etc/systemd/system/$UNIT.timer" <<'EOF'
+[Unit]
+Description=Run the MindfulFleet Wi-Fi watchdog every 2 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+        systemctl daemon-reload
+        systemctl enable --now "$UNIT.timer" >/dev/null
+        echo "Wi-Fi watchdog is on. If this Pi can't reach its router for about 6 minutes, it restarts Wi-Fi;"
+        echo "after 3 restarts that don't help, it reboots (at most once an hour). See what it did: journalctl -u $UNIT"
+        ;;
+      off)
+        need_root
+        systemctl disable --now "$UNIT.timer" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/$UNIT.service" "/etc/systemd/system/$UNIT.timer"
+        systemctl daemon-reload
+        echo "Wi-Fi watchdog is off."
+        ;;
+      status)
+        if systemctl is-enabled "$UNIT.timer" >/dev/null 2>&1; then echo "Wi-Fi watchdog: on"; else echo "Wi-Fi watchdog: off"; fi
+        ;;
+      *) echo "Usage: mindful-fleet wifi-watchdog on | off | status" >&2; exit 1 ;;
+    esac
+    ;;
   update)
     need_root
     LATEST="$(latest)" || { echo "Couldn't check for updates." >&2; exit 1; }
@@ -104,7 +155,7 @@ case "${1:-status}" in
     curl -fsSL --proto "=https" --tlsv1.2 "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
     ;;
   *)
-    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig | password [off]" >&2
+    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig | password [off] | tidy [undo] | wifi-watchdog on|off|status" >&2
     exit 1
     ;;
 esac

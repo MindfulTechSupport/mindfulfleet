@@ -58,6 +58,8 @@ To control updates on a computer:
 | `sudo mindful-fleet xmrig` | Turns on XMRig's read-only API so the card shows hashrate. See Mining |
 | `sudo mindful-fleet every 6h` | Checks for updates every 6 hours. Also `hourly`, `daily` (the default), or `weekly` |
 | `sudo mindful-fleet password` | On the hub: chooses or changes the dashboard password. `password off` turns it off |
+| `sudo mindful-fleet tidy` | Frees up space: shows what it would clear, asks first, then shows how much it freed. See Pi tools |
+| `sudo mindful-fleet wifi-watchdog on` | Reconnects Wi-Fi by itself when this computer loses its router. Also `off` and `status`. See Pi tools |
 
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
@@ -66,6 +68,14 @@ curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/rel
 ```
 
 Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
+
+## Pi tools
+
+Two small helpers each computer can use on its own. Neither changes anything until you run it.
+
+**Free up space: `sudo mindful-fleet tidy`.** Shows how much free space the computer has, the downloaded update files it can clear, and the size of the system log. It asks before clearing anything, then keeps only the newest 100 MB of the log and shows the space freed. It also offers to keep the log under 100 MB from now on, which means less writing to the SD card. `sudo mindful-fleet tidy undo` removes that limit.
+
+**Wi-Fi watchdog: `sudo mindful-fleet wifi-watchdog on`.** Every 2 minutes the computer checks it can reach its router. After about 6 minutes without it, it restarts Wi-Fi. If 3 restarts don't help, it reboots, at most once an hour. It does nothing on a computer that's on a network cable. `wifi-watchdog off` turns it off, `wifi-watchdog status` shows whether it's on, and `journalctl -u mindful-fleet-wifi-watchdog` shows what it did.
 
 ## Arrange your dashboard
 
@@ -140,8 +150,8 @@ CPU load never changes the color, because some computers, such as miners, are me
 ## Remove it
 
 ```
-sudo systemctl disable --now mindful-fleet-reporter mindful-fleet-hub
-sudo rm -rf /etc/systemd/system/mindful-fleet-*.service /opt/mindful-fleet /etc/mindful-fleet /var/lib/mindful-fleet
+sudo systemctl disable --now mindful-fleet-reporter mindful-fleet-hub mindful-fleet-update.timer mindful-fleet-wifi-watchdog.timer
+sudo rm -rf /etc/systemd/system/mindful-fleet-*.service /etc/systemd/system/mindful-fleet-*.timer /etc/systemd/journald.conf.d/mindful-fleet.conf /opt/mindful-fleet /etc/mindful-fleet /var/lib/mindful-fleet
 sudo userdel mindful-fleet
 ```
 

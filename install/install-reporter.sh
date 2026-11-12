@@ -27,6 +27,8 @@ getent group video >/dev/null && usermod -aG video mindful-fleet
 
 install -d -m 755 /opt/mindful-fleet/reporter
 install -m 755 "$SOURCE"/reporter/mindful_fleet_reporter.py /opt/mindful-fleet/reporter/
+install -d -m 755 /opt/mindful-fleet/tools
+install -m 755 "$SOURCE"/tools/mindful_fleet_tools.py /opt/mindful-fleet/tools/
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
 umask 027

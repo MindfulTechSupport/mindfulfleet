@@ -12,13 +12,14 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter")]
+sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter"), str(ROOT / "tools")]
 
 import health  # noqa: E402
 import mindful_fleet_hub as hub  # noqa: E402
 import auth  # noqa: E402
 import mindful_fleet_reporter as reporter  # noqa: E402
 import averages  # noqa: E402
+import mindful_fleet_tools as tools  # noqa: E402
 
 GIB = 1024**3
 
@@ -710,6 +711,80 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(self.call("/api/fleet")[0], 200)
         self.assertEqual(self.call("/api/auth")[1], {"password_set": False, "signed_in": True})
         self.assertEqual(self.call("/api/sign-in", {"password": "anything at all"})[0], 409)
+
+
+class WifiWatchdogTests(unittest.TestCase):
+    def check(self, state, results, start=10_000.0):
+        actions = []
+        for n, reachable in enumerate(results):
+            action, state = tools.decide(state, reachable, start + n * 120)
+            actions.append(action)
+        return actions, state
+
+    def test_router_reachable_does_nothing_and_resets(self):
+        actions, state = self.check({"misses": 2, "restarts": 1}, [True])
+        self.assertEqual(actions, ["none"])
+        self.assertEqual((state["misses"], state["restarts"]), (0, 0))
+
+    def test_restarts_wifi_after_three_misses(self):
+        actions, _ = self.check({}, [False] * 3)
+        self.assertEqual(actions, ["none", "none", "restart"])
+
+    def test_reboots_only_after_three_restarts_and_at_most_hourly(self):
+        actions, state = self.check({}, [False] * 12)
+        self.assertEqual(actions.count("restart"), 3)
+        self.assertEqual(actions[-1], "reboot")
+        actions, _ = self.check(state, [False] * 12, start=state["last_reboot"] + 60)
+        self.assertNotIn("reboot", actions)
+
+    def test_reads_the_default_route(self):
+        folder = tempfile.mkdtemp()
+        route = Path(folder, "route")
+        route.write_text("Iface\tDestination\tGateway\tFlags\n"
+                         "wlan0\t0001A8C0\t00000000\t0001\n"
+                         "wlan0\t00000000\t0101A8C0\t0003\n")
+        self.assertEqual(tools.default_route(route), ("wlan0", "192.168.1.1"))
+        self.assertEqual(tools.default_route(Path(folder, "missing")), (None, None))
+
+    def test_does_nothing_on_a_cable(self):
+        folder = tempfile.mkdtemp()
+        route = Path(folder, "route")
+        route.write_text("Iface\tDestination\tGateway\n" "eth0\t00000000\t0101A8C0\n")
+        state_dir = tools.STATE_DIR
+        tools.STATE_DIR = Path(folder, "state")
+        self.addCleanup(setattr, tools, "STATE_DIR", state_dir)
+        self.assertEqual(tools.wifi_check(route_file=route), 0)
+        self.assertFalse(Path(tools.STATE_DIR, "wifi-watchdog.json").exists())  # It didn't even ping.
+
+
+class TidyTests(unittest.TestCase):
+    def test_reads_the_log_size(self):
+        self.assertEqual(tools.parse_journal_usage("Archived and active journals take up 456.0M in the file system."),
+                         int(456.0 * 1024**2))
+        self.assertEqual(tools.parse_journal_usage("take up 1.5G in"), int(1.5 * 1024**3))
+        self.assertIsNone(tools.parse_journal_usage("no numbers here"))
+
+    def test_counts_downloaded_update_files(self):
+        folder = tempfile.mkdtemp()
+        Path(folder, "a.deb").write_bytes(b"x" * 1000)
+        Path(folder, "notes.txt").write_bytes(b"x" * 50)
+        self.assertEqual(tools.apt_cache_size(folder), 1000)
+
+    def test_saying_no_changes_nothing(self):
+        cap = tools.JOURNAL_CAP
+        tools.JOURNAL_CAP = Path(tempfile.mkdtemp(), "cap.conf")
+        self.addCleanup(setattr, tools, "JOURNAL_CAP", cap)
+        calls = []
+        real = tools.run
+        tools.run = lambda args, timeout=60: (calls.append(args), (False, ""))[1]
+        self.addCleanup(setattr, tools, "run", real)
+        self.assertEqual(tools.tidy(yes=False, root=tempfile.gettempdir()), 0)
+        self.assertEqual([c for c in calls if c[0] in ("apt-get", "systemctl")], [])
+        self.assertFalse(tools.JOURNAL_CAP.exists())
+
+    def test_sizes_read_plainly(self):
+        self.assertEqual(tools.human(512), "512 bytes")
+        self.assertEqual(tools.human(1536 * 1024), "1.5 MB")
 
 
 class XmrigTests(unittest.TestCase):
