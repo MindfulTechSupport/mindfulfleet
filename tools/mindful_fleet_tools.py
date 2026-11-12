@@ -225,7 +225,7 @@ def wifi_check(now=None, route_file="/proc/net/route", net_dir=NET_DIR):
     interface, gateway = default_route(route_file)
     # Only a Wi-Fi interface with a plain Linux name (at most 15 letters, digits, "_", "." or "-") is touched.
     if interface and WIFI_NAME.fullmatch(interface):
-        state["interface"] = interface
+        state["interface"], state["gateway"] = interface, gateway
         reachable = router_answers(gateway, interface)
     elif interface:
         if saved:  # Now on a cable or another link: start afresh if it goes back to Wi-Fi.
@@ -237,8 +237,8 @@ def wifi_check(now=None, route_file="/proc/net/route", net_dir=NET_DIR):
     else:
         return  # Never seen on Wi-Fi: nothing for the watchdog to do.
     if reachable:
-        state["seen"] = True
-    if not reachable and not state.get("seen"):
+        state["seen"] = state.get("gateway")
+    if not reachable and (not state.get("seen") or state.get("seen") != state.get("gateway")):
         action = "none"  # Never seen this router answer: it can't tell when Wi-Fi works, so it doesn't act.
     else:
         action, state = decide(state, reachable, now or time.time())

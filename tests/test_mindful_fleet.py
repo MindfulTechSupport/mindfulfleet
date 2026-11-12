@@ -810,6 +810,16 @@ class WifiWatchdogMoreTests(unittest.TestCase):
         self.assertNotIn("systemctl", [c[0] for c in self.calls])
         self.assertFalse([c for c in self.calls if c[:3] == ["ip", "link", "set"]])
 
+    def test_a_new_wifi_network_has_to_answer_first(self):
+        self.answers["ping"] = (True, "")
+        tools.wifi_check(now=1000.0, route_file=self.route("wlan0\t00000000\t0101A8C0\n"), net_dir=self.folder)
+        self.answers["ping"] = (False, "")
+        other = self.route("wlan0\t00000000\t0102A8C0\n")  # A different router: 192.168.2.1
+        for n in range(12):
+            tools.wifi_check(now=1120.0 + n * 120, route_file=other, net_dir=self.folder)
+        self.assertNotIn("systemctl", [c[0] for c in self.calls])
+        self.assertNotIn("nmcli", [c[0] for c in self.calls])
+
     def test_a_knock_on_a_common_port_counts(self):
         self.knock.return_value = True
         self.assertTrue(tools.router_answers("192.168.1.1", "wlan0"))
