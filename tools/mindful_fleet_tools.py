@@ -5,6 +5,7 @@ Standard library only. Called by the `mindful-fleet` command (as root):
     mindful_fleet_tools.py tidy [--yes]
     mindful_fleet_tools.py tidy-undo
     mindful_fleet_tools.py wifi-check
+    mindful_fleet_tools.py wifi-ready
 """
 import glob
 import ipaddress
@@ -24,7 +25,9 @@ JOURNAL_KEEP = "100M"
 
 MISSES_BEFORE_RESTART = 3  # One check every 2 minutes, so about 6 minutes without the router.
 RESTARTS_BEFORE_REBOOT = 3
-REBOOT_GAP = 3600  # Never reboot more than once an hour.
+REBOOT_GAP = 3600  # Never reboot more than once an hour ...
+MAX_REBOOT_GAP = 24 * 3600  # ... and wait longer after each reboot that didn't help, up to a day.
+NET_DIR = Path("/sys/class/net")
 WIFI_NAME = re.compile(r"wl[A-Za-z0-9_.-]{0,13}")
 
 
@@ -132,11 +135,25 @@ def default_route(route_file="/proc/net/route"):
     return None, None
 
 
+def _number(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def decide(state, reachable, now):
-    """What to do after one check. Returns (action, new state). Actions: none, restart, reboot."""
-    state = {"misses": 0, "restarts": 0, "last_reboot": 0, **state}
+    """What to do after one check. Returns (action, new state). Actions: none, restart, reboot.
+
+    Reboots wait at least an hour, and each reboot that didn't help doubles the wait, up to a day, so a
+    router that's switched off for a weekend doesn't mean a reboot every hour."""
+    state = {**state,
+             "misses": int(_number(state.get("misses"), 0)),
+             "restarts": int(_number(state.get("restarts"), 0)),
+             "last_reboot": _number(state.get("last_reboot"), 0),
+             "reboot_gap": min(MAX_REBOOT_GAP, max(REBOOT_GAP, _number(state.get("reboot_gap"), REBOOT_GAP)))}
     if reachable:
-        return "none", {**state, "misses": 0, "restarts": 0}
+        return "none", {**state, "misses": 0, "restarts": 0, "reboot_gap": REBOOT_GAP}
     state["misses"] += 1
     if state["misses"] < MISSES_BEFORE_RESTART:
         return "none", state
@@ -144,9 +161,19 @@ def decide(state, reachable, now):
     if state["restarts"] < RESTARTS_BEFORE_REBOOT:
         state["restarts"] += 1
         return "restart", state
-    if now - state["last_reboot"] >= REBOOT_GAP:
-        return "reboot", {**state, "restarts": 0, "last_reboot": now}
+    if now - state["last_reboot"] >= state["reboot_gap"]:
+        return "reboot", {**state, "restarts": 0, "last_reboot": now,
+                          "reboot_gap": min(MAX_REBOOT_GAP, state["reboot_gap"] * 2)}
     return "none", state
+
+
+def router_answers(gateway, interface):
+    """True when the router answers a ping, or, for routers that ignore pings, when the network has just
+    confirmed it's there (the ping makes the Pi ask, and a REACHABLE entry means the router replied)."""
+    if run(["ping", "-c", "1", "-W", "3", gateway], timeout=10)[0]:
+        return True
+    ok, text = run(["ip", "neigh", "show", gateway, "dev", interface])
+    return ok and "REACHABLE" in text.split()
 
 
 def restart_wifi(interface):
@@ -159,25 +186,55 @@ def restart_wifi(interface):
     return run(["ip", "link", "set", interface, "up"])[0]
 
 
-def wifi_check(now=None, route_file="/proc/net/route"):
+def wifi_ready(route_file="/proc/net/route"):
+    """Before turning the watchdog on: make sure it can tell when the router is there. Returns an exit code."""
     interface, gateway = default_route(route_file)
-    # Only a Wi-Fi interface with a plain Linux name (at most 15 letters, digits, "_", "." or "-") is touched.
     if not interface or not WIFI_NAME.fullmatch(interface):
-        return  # Not using Wi-Fi right now (cable, or no network at all): nothing for the watchdog to do.
+        print("This computer isn't using Wi-Fi right now. The watchdog will start watching when it does.")
+        return 0
+    if router_answers(gateway, interface):
+        return 0
+    print(f"The router ({gateway}) didn't answer, so the watchdog couldn't tell when Wi-Fi works and might")
+    print("restart it for nothing. Wi-Fi watchdog not turned on. Try again when the Wi-Fi is working.")
+    return 1
+
+
+def wifi_check(now=None, route_file="/proc/net/route", net_dir=NET_DIR):
     path = STATE_DIR / "wifi-watchdog.json"
     try:
         state = json.loads(path.read_text())
+        state = state if isinstance(state, dict) else {}
     except (OSError, ValueError):
         state = {}
-    reachable = run(["ping", "-c", "1", "-W", "3", gateway], timeout=10)[0]
+    saved = state.get("interface")
+    interface, gateway = default_route(route_file)
+    # Only a Wi-Fi interface with a plain Linux name (at most 15 letters, digits, "_", "." or "-") is touched.
+    if interface and WIFI_NAME.fullmatch(interface):
+        state["interface"] = interface
+        reachable = router_answers(gateway, interface)
+    elif interface:
+        if saved:  # Now on a cable or another link: start afresh if it goes back to Wi-Fi.
+            path.unlink(missing_ok=True)
+        return
+    elif isinstance(saved, str) and WIFI_NAME.fullmatch(saved) and (Path(net_dir) / saved).exists():
+        # No route at all, but this computer was on Wi-Fi: the connection has dropped. That counts as a miss.
+        interface, gateway, reachable = saved, "the router", False
+    else:
+        return  # Never seen on Wi-Fi: nothing for the watchdog to do.
     action, state = decide(state, reachable, now or time.time())
     if action == "restart":
-        print(f"Wi-Fi watchdog: can't reach the router ({gateway}); restarting Wi-Fi (try {state['restarts']}).")
+        print(f"Wi-Fi watchdog: can't reach {gateway}; restarting Wi-Fi (try {state['restarts']}).")
         restart_wifi(interface)
     elif action == "reboot":
-        print("Wi-Fi watchdog: Wi-Fi restarts didn't help; rebooting (at most once an hour).")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state))
+        hours = state["reboot_gap"] / 3600
+        print(f"Wi-Fi watchdog: Wi-Fi restarts didn't help; rebooting. If that doesn't help either, "
+              f"the next reboot waits at least {hours:g} hours.")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state))
+    except OSError as error:
+        print(f"Wi-Fi watchdog: can't save its notes ({error}). Free up space: sudo mindful-fleet tidy",
+              file=sys.stderr)
     if action == "reboot":
         run(["systemctl", "reboot"])
 
@@ -185,12 +242,14 @@ def wifi_check(now=None, route_file="/proc/net/route"):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     command = argv[0] if argv else ""
+    if command == "wifi-ready":
+        return wifi_ready()
     commands = {"tidy": lambda: tidy(yes=True if "--yes" in argv else None), "tidy-undo": tidy_undo,
                 "wifi-check": wifi_check}
     if command in commands:
         commands[command]()
         return 0
-    print("Usage: mindful_fleet_tools.py tidy [--yes] | tidy-undo | wifi-check", file=sys.stderr)
+    print("Usage: mindful_fleet_tools.py tidy [--yes] | tidy-undo | wifi-check | wifi-ready", file=sys.stderr)
     return 2
 
 

@@ -75,13 +75,13 @@ Two small helpers each computer can use on its own. Neither changes anything unt
 
 **Free up space: `sudo mindful-fleet tidy`.** Shows how much free space the computer has, the downloaded update files it can clear, and the size of the system log. It asks before clearing anything, then keeps only the newest 100 MB of the log and shows the space freed. It also offers to keep the log under 100 MB from now on, which means less writing to the SD card. `sudo mindful-fleet tidy undo` removes that limit.
 
-**Wi-Fi watchdog: `sudo mindful-fleet wifi-watchdog on`.** Every 2 minutes the computer checks it can reach its router. After about 6 minutes without it, it restarts Wi-Fi. If 3 restarts don't help, it reboots, at most once an hour. It does nothing on a computer that's on a network cable. `wifi-watchdog off` turns it off, `wifi-watchdog status` shows whether it's on, and `journalctl -u mindful-fleet-wifi-watchdog` shows what it did.
+**Wi-Fi watchdog: `sudo mindful-fleet wifi-watchdog on`.** Every 2 minutes the computer checks it can reach its router, including when the Wi-Fi connection has dropped altogether. After about 6 minutes without it, it restarts Wi-Fi. If 3 restarts don't help, it reboots, at most once an hour, and if the router stays away it waits longer before each reboot (2 hours, then 4, up to once a day). It only turns on when the router answers, so it can tell when Wi-Fi works. It does nothing on a computer that's on a network cable. `wifi-watchdog off` turns it off, `wifi-watchdog status` shows whether it's on, and `journalctl -u mindful-fleet-wifi-watchdog` shows what it did.
 
 ## Find my Pis
 
 Settings → **Find my Pis** → **Look now** lists the Raspberry Pis on the hub's network, including ones that aren't on the dashboard yet, with each one's address and whether SSH is on. The hub knocks once on each address so the network learns who's there, then keeps the devices whose hardware address belongs to Raspberry Pi. It logs in to nothing and changes nothing, and it only looks when you press the button.
 
-It can't see Pis on another network or behind another router, or ones set to use a made-up hardware address. It only looks on a home or office network, and on a very large one only at the 254 addresses around the hub.
+It needs a dashboard password first, so nobody else on the network can ask for the list. It can't see Pis on another network or behind another router, or ones set to use a made-up hardware address. It only looks on a home or office network, and only at the 254 addresses around the hub.
 
 ## Arrange your dashboard
 
@@ -156,8 +156,10 @@ CPU load never changes the color, because some computers, such as miners, are me
 ## Remove it
 
 ```
-sudo systemctl disable --now mindful-fleet-reporter mindful-fleet-hub mindful-fleet-update.timer mindful-fleet-wifi-watchdog.timer
-sudo rm -rf /etc/systemd/system/mindful-fleet-*.service /etc/systemd/system/mindful-fleet-*.timer /etc/systemd/journald.conf.d/mindful-fleet.conf /opt/mindful-fleet /etc/mindful-fleet /var/lib/mindful-fleet
+for unit in mindful-fleet-reporter mindful-fleet-hub mindful-fleet-update.timer mindful-fleet-wifi-watchdog.timer; do sudo systemctl disable --now "$unit" 2>/dev/null; done
+sudo rm -rf /etc/systemd/system/mindful-fleet-* /etc/systemd/journald.conf.d/mindful-fleet.conf /opt/mindful-fleet /etc/mindful-fleet /var/lib/mindful-fleet /usr/local/bin/mindful-fleet
+sudo systemctl daemon-reload
+sudo systemctl restart systemd-journald
 sudo userdel mindful-fleet
 ```
 

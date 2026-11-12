@@ -14,6 +14,9 @@ install -d -m 755 /opt/mindful-fleet/hub/dashboard
 install -m 644 "$SOURCE"/hub/*.py /opt/mindful-fleet/hub/
 chmod 755 /opt/mindful-fleet/hub/mindful_fleet_hub.py
 install -m 644 "$SOURCE"/hub/dashboard/* /opt/mindful-fleet/hub/dashboard/
+# The Pi tools (tidy, Wi-Fi watchdog) work on a hub-only computer too.
+install -d -m 755 /opt/mindful-fleet/tools
+install -m 755 "$SOURCE"/tools/mindful_fleet_tools.py /opt/mindful-fleet/tools/
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
 if [[ -f /etc/mindful-fleet/hub.env ]]; then

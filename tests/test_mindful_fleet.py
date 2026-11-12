@@ -760,6 +760,76 @@ class WifiWatchdogTests(unittest.TestCase):
         self.assertFalse(Path(tools.STATE_DIR, "wifi-watchdog.json").exists())  # It didn't even ping.
 
 
+class WifiWatchdogMoreTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        state_dir = tools.STATE_DIR
+        tools.STATE_DIR = Path(self.folder, "state")
+        self.addCleanup(setattr, tools, "STATE_DIR", state_dir)
+        self.calls = []
+        self.answers = {}
+        real = tools.run
+        tools.run = lambda args, timeout=60: (self.calls.append(args), self.answers.get(args[0], (False, "")))[1]
+        self.addCleanup(setattr, tools, "run", real)
+        sleep = tools.time.sleep
+        tools.time.sleep = lambda seconds: None
+        self.addCleanup(setattr, tools.time, "sleep", sleep)
+
+    def route(self, text):
+        path = Path(self.folder, "route")
+        path.write_text("Iface\tDestination\tGateway\n" + text)
+        return str(path)
+
+    def test_reboots_slow_down_while_the_router_stays_away_and_reset_when_it_returns(self):
+        state, now, reboots = {}, 10_000.0, []
+        for _ in range(48 * 30):  # Two days of checks every 2 minutes with the router switched off.
+            action, state = tools.decide(state, False, now)
+            if action == "reboot":
+                reboots.append(now)
+            now += 120
+        gaps = [b - a for a, b in zip(reboots, reboots[1:])]  # noqa: B905
+        self.assertTrue(all(later >= earlier for earlier, later in zip(gaps, gaps[1:])))  # noqa: B905
+        self.assertLessEqual(len(reboots), 7)
+        self.assertGreaterEqual(min(gaps), 2 * tools.REBOOT_GAP)
+        _, state = tools.decide(state, True, now)
+        self.assertEqual(state["reboot_gap"], tools.REBOOT_GAP)
+
+    def test_odd_saved_notes_dont_crash(self):
+        action, state = tools.decide({"misses": "lots", "reboot_gap": None, "last_reboot": [1]}, False, 100.0)
+        self.assertEqual((action, state["misses"]), ("none", 1))
+
+    def test_router_that_ignores_pings_still_counts_as_there(self):
+        self.answers["ip"] = (True, "192.168.1.1 lladdr aa:bb:cc:dd:ee:ff REACHABLE")
+        self.assertTrue(tools.router_answers("192.168.1.1", "wlan0"))
+        self.answers["ip"] = (True, "192.168.1.1 lladdr aa:bb:cc:dd:ee:ff STALE")
+        self.assertFalse(tools.router_answers("192.168.1.1", "wlan0"))
+
+    def test_lost_connection_with_no_route_counts_as_misses(self):
+        net = Path(self.folder, "net")
+        Path(net, "wlan0").mkdir(parents=True)
+        tools.wifi_check(now=1000.0, route_file=self.route("wlan0\t00000000\t0101A8C0\n"), net_dir=net)
+        self.answers["ping"] = (False, "")
+        empty = self.route("")
+        for n in range(3):
+            tools.wifi_check(now=1120.0 + n * 120, route_file=empty, net_dir=net)
+        self.assertIn(["nmcli", "radio", "wifi", "on"] if tools.shutil.which("nmcli") else
+                      ["ip", "link", "set", "wlan0", "up"], self.calls)
+
+    def test_moving_to_a_cable_starts_afresh(self):
+        tools.wifi_check(now=1000.0, route_file=self.route("wlan0\t00000000\t0101A8C0\n"), net_dir=self.folder)
+        notes = Path(tools.STATE_DIR, "wifi-watchdog.json")
+        self.assertTrue(notes.exists())
+        tools.wifi_check(now=1120.0, route_file=self.route("eth0\t00000000\t0101A8C0\n"), net_dir=self.folder)
+        self.assertFalse(notes.exists())
+
+    def test_turning_on_refuses_when_the_router_cant_be_told_apart(self):
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(tools.wifi_ready(self.route("wlan0\t00000000\t0101A8C0\n")), 1)
+            self.answers["ping"] = (True, "")
+            self.assertEqual(tools.wifi_ready(self.route("wlan0\t00000000\t0101A8C0\n")), 0)
+            self.assertEqual(tools.wifi_ready(self.route("eth0\t00000000\t0101A8C0\n")), 0)
+
+
 class TidyTests(unittest.TestCase):
     def test_reads_the_log_size(self):
         self.assertEqual(tools.parse_journal_usage("Archived and active journals take up 456.0M in the file system."),
@@ -847,6 +917,10 @@ class FindMyPisTests(unittest.TestCase):
         ])
         self.assertEqual(results["found"][1]["mac"], "b8:27:eb:65:43:21")
 
+    def test_a_slash_23_is_narrowed_too(self):
+        wide = ROUTES.replace("00FFFFFF", "00FEFFFF").replace("0001A8C0\t00000000", "0000A8C0\t00000000")
+        self.assertEqual(self.find(routes=write(self.folder, "w23", wide))["network"], "192.168.1.0/24")
+
     def test_big_networks_are_narrowed_to_the_hubs_own_slice(self):
         wide = ROUTES.replace("0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF", "0000A8C0\t00000000\t0001\t0\t0\t600\t0000FFFF")
         results = self.find(routes=write(self.folder, "wide", wide))
@@ -909,6 +983,11 @@ class FindMyPisHubTests(unittest.TestCase):
         _, session, _ = self.sign_in()
         self.assertEqual(self.call("/api/discover", {}, cookie=session,
                                    headers={"Origin": "http://evil.example"})[0], 404)
+        self.assertEqual(self.seen, [])
+
+    def test_refused_until_a_password_is_set(self):
+        Path(self.folder, "password.json").unlink()
+        self.assertEqual(self.call("/api/discover", {})[0], 403)
         self.assertEqual(self.seen, [])
 
     def test_signed_in_look_lists_pis_and_who_reports(self):

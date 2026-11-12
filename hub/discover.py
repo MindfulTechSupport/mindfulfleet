@@ -1,7 +1,7 @@
 """Find my Pis: list the Raspberry Pis on the hub's own network, including ones that don't report yet.
 
 Read-only and standard library only. It runs only when someone presses the button on the dashboard:
-1. Work out the hub's own network from the routing table (a home network, at most 1024 addresses).
+1. Work out the hub's own network from the routing table (a home network; at most its 254 neighbours).
 2. Knock once on port 22 of every address, so the network table learns each device's hardware address.
    (A knock opens a connection and closes it at once. Nothing is logged in to or changed.)
 3. Read the network table and keep the devices whose hardware address belongs to Raspberry Pi Ltd.
@@ -21,7 +21,8 @@ KNOCK_PORT = 22
 KNOCK_SECONDS = 0.4
 KNOCKERS = 64
 SETTLE_SECONDS = 0.5  # Late replies to the network table's own questions.
-SMALLEST_PREFIX = 22  # Bigger networks are scanned only around the hub's own address (its /24).
+SMALLEST_PREFIX = 24  # Bigger networks are scanned only around the hub's own address (its /24), so the
+# network table (512 entries before the kernel starts tidying) never overflows mid-look.
 REST_SECONDS = 30  # Pressing the button again sooner shows the last results.
 
 # Hardware address prefixes registered to Raspberry Pi (IEEE register, as listed by maclookup.app, aruljohn.com
@@ -139,7 +140,7 @@ def find_pis(known, route_file=ROUTE_FILE, arp_file=ARP_FILE, knocker=knock, fin
     network, mine = place
     addresses = [a for a in network.hosts() if a != mine]
     with ThreadPoolExecutor(max_workers=KNOCKERS) as pool:
-        answered = dict(zip(addresses, pool.map(knocker, addresses), strict=True))
+        answered = dict(zip(addresses, pool.map(knocker, addresses)))  # noqa: B905 - same length; strict needs 3.10
     if settle:
         time.sleep(settle)
     table = network_table(arp_file)

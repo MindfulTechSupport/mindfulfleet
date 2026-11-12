@@ -463,9 +463,17 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                 return self._refuse_signed_out()
             if self._read_json(MAX_AUTH_BYTES) is None:
                 return
-            results = discovery.run(fleet.known_addresses())
+            if passwords is not None and not passwords.has_password():
+                # Without a password anyone on the network, or a web page they open, could ask for this list.
+                return self._json(403, {"error": "Give the dashboard a password first. On the hub, run: "
+                                                 "sudo mindful-fleet password"})
+            try:
+                results = discovery.run(fleet.known_addresses())
+            except Exception as error:  # noqa: BLE001 - always answer the browser
+                print(f"Find my Pis failed: {error!r}", file=sys.stderr, flush=True)
+                return self._json(500, {"error": "The hub couldn't look just now. Try again in a minute."})
             if results is None:
-                return self._json(409, {"error": "Already looking. The results will show in a few seconds."})
+                return self._json(409, {"error": "Already looking. Press Look now again in a few seconds."})
             if "error" in results:
                 return self._json(503, results)
             self._json(200, results)

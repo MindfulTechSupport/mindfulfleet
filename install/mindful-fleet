@@ -93,15 +93,16 @@ case "${1:-status}" in
   tidy)
     need_root
     TOOLS=/opt/mindful-fleet/tools/mindful_fleet_tools.py
-    [ -f "$TOOLS" ] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
-    if [ "${2:-}" = "undo" ]; then python3 "$TOOLS" tidy-undo; else python3 "$TOOLS" tidy; fi
+    [[ -f "$TOOLS" ]] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+    if [[ "${2:-}" = "undo" ]]; then python3 "$TOOLS" tidy-undo; else python3 "$TOOLS" tidy; fi
     ;;
   wifi-watchdog)
     UNIT=mindful-fleet-wifi-watchdog
     case "${2:-status}" in
       on)
         need_root
-        [ -f /opt/mindful-fleet/tools/mindful_fleet_tools.py ] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+        [[ -f /opt/mindful-fleet/tools/mindful_fleet_tools.py ]] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+        python3 /opt/mindful-fleet/tools/mindful_fleet_tools.py wifi-ready || exit 1
         cat > "/etc/systemd/system/$UNIT.service" <<'EOF'
 [Unit]
 Description=MindfulFleet Wi-Fi watchdog (reconnects Wi-Fi when the router can't be reached)
@@ -124,7 +125,8 @@ EOF
         systemctl daemon-reload
         systemctl enable --now "$UNIT.timer" >/dev/null
         echo "Wi-Fi watchdog is on. If this Pi can't reach its router for about 6 minutes, it restarts Wi-Fi;"
-        echo "after 3 restarts that don't help, it reboots (at most once an hour). See what it did: journalctl -u $UNIT"
+        echo "after 3 restarts that don't help, it reboots (at most once an hour, and less often if that doesn't help)."
+        echo "See what it did: journalctl -u $UNIT"
         ;;
       off)
         need_root

@@ -2,10 +2,11 @@
 
 ## Not released yet
 
-- Find my Pis: Settings → Find my Pis → Look now lists the Raspberry Pis on the hub's network, marks which are already on the dashboard, and shows whether SSH is on. Read-only, and only when you press the button.
+- Find my Pis: Settings → Find my Pis → Look now lists the Raspberry Pis on the hub's network (the 254 addresses around the hub), marks which are already on the dashboard, and shows whether SSH is on. Read-only, only when you press the button, and only once the dashboard has a password.
 - `sudo mindful-fleet tidy` frees up space on a computer: it shows what it would clear (downloaded update files, and the system log beyond its newest 100 MB), asks first, and shows the space freed. It can also keep the log under 100 MB from now on, for less SD card wear; `tidy undo` removes that limit.
-- `sudo mindful-fleet wifi-watchdog on` reconnects Wi-Fi by itself: after about 6 minutes without the router it restarts Wi-Fi, and after 3 restarts that don't help it reboots, at most once an hour. Off by default.
-- The "Remove it" steps now also remove the update timer, the Wi-Fi watchdog and the log limit.
+- `sudo mindful-fleet wifi-watchdog on` reconnects Wi-Fi by itself, including when the connection drops altogether: after about 6 minutes without the router it restarts Wi-Fi, and after 3 restarts that don't help it reboots, at most once an hour and less often while the router stays away (up to once a day). It turns on only when the router answers. Off by default.
+- The Pi tools are installed on hub-only computers too.
+- The "Remove it" steps now also remove the update timer, the Wi-Fi watchdog, the log limit and the `mindful-fleet` command, and carry on if a part was never installed.
 
 ## 0.2.11 (2026-11-11)
 
