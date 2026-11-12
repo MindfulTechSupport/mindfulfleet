@@ -10,9 +10,11 @@ Standard library only. Called by the `mindful-fleet` command (as root):
 import glob
 import ipaddress
 import json
+import math
 import os
 import re
 import shutil
+import socket
 import subprocess  # nosec B404 - fixed commands only, never a shell
 import sys
 import time
@@ -137,9 +139,10 @@ def default_route(route_file="/proc/net/route"):
 
 def _number(value, default):
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
 
 
 def decide(state, reachable, now):
@@ -167,10 +170,22 @@ def decide(state, reachable, now):
     return "none", state
 
 
+def router_knock(gateway, ports=(53, 80, 443), timeout=2):
+    """For routers that ignore pings: any answer on a common port, even "no thanks", means it's there."""
+    for port in ports:
+        try:
+            with socket.create_connection((gateway, port), timeout=timeout):
+                return True
+        except ConnectionRefusedError:
+            return True
+        except OSError:
+            continue
+    return False
+
+
 def router_answers(gateway, interface):
-    """True when the router answers a ping, or, for routers that ignore pings, when the network has just
-    confirmed it's there (the ping makes the Pi ask, and a REACHABLE entry means the router replied)."""
-    if run(["ping", "-c", "1", "-W", "3", gateway], timeout=10)[0]:
+    """True when the router answers a ping, a knock on a common port, or the network has confirmed it's there."""
+    if run(["ping", "-c", "1", "-W", "3", gateway], timeout=10)[0] or router_knock(gateway):
         return True
     ok, text = run(["ip", "neigh", "show", gateway, "dev", interface])
     return ok and "REACHABLE" in text.split()
@@ -221,7 +236,12 @@ def wifi_check(now=None, route_file="/proc/net/route", net_dir=NET_DIR):
         interface, gateway, reachable = saved, "the router", False
     else:
         return  # Never seen on Wi-Fi: nothing for the watchdog to do.
-    action, state = decide(state, reachable, now or time.time())
+    if reachable:
+        state["seen"] = True
+    if not reachable and not state.get("seen"):
+        action = "none"  # Never seen this router answer: it can't tell when Wi-Fi works, so it doesn't act.
+    else:
+        action, state = decide(state, reachable, now or time.time())
     if action == "restart":
         print(f"Wi-Fi watchdog: can't reach {gateway}; restarting Wi-Fi (try {state['restarts']}).")
         restart_wifi(interface)

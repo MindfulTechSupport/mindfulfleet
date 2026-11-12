@@ -774,6 +774,9 @@ class WifiWatchdogMoreTests(unittest.TestCase):
         sleep = tools.time.sleep
         tools.time.sleep = lambda seconds: None
         self.addCleanup(setattr, tools.time, "sleep", sleep)
+        patcher = mock.patch.object(tools, "router_knock", return_value=False)
+        self.knock = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def route(self, text):
         path = Path(self.folder, "route")
@@ -795,8 +798,21 @@ class WifiWatchdogMoreTests(unittest.TestCase):
         self.assertEqual(state["reboot_gap"], tools.REBOOT_GAP)
 
     def test_odd_saved_notes_dont_crash(self):
-        action, state = tools.decide({"misses": "lots", "reboot_gap": None, "last_reboot": [1]}, False, 100.0)
+        action, state = tools.decide({"misses": "lots", "reboot_gap": float("nan"), "last_reboot": float("inf")},
+                                     False, 100.0)
         self.assertEqual((action, state["misses"]), ("none", 1))
+
+    def test_never_acts_on_a_router_it_has_never_seen_answer(self):
+        route = self.route("wlan0\t00000000\t0101A8C0\n")
+        for n in range(12):
+            tools.wifi_check(now=1000.0 + n * 120, route_file=route, net_dir=self.folder)
+        self.assertNotIn("nmcli", [c[0] for c in self.calls])
+        self.assertNotIn("systemctl", [c[0] for c in self.calls])
+        self.assertFalse([c for c in self.calls if c[:3] == ["ip", "link", "set"]])
+
+    def test_a_knock_on_a_common_port_counts(self):
+        self.knock.return_value = True
+        self.assertTrue(tools.router_answers("192.168.1.1", "wlan0"))
 
     def test_router_that_ignores_pings_still_counts_as_there(self):
         self.answers["ip"] = (True, "192.168.1.1 lladdr aa:bb:cc:dd:ee:ff REACHABLE")
@@ -807,6 +823,7 @@ class WifiWatchdogMoreTests(unittest.TestCase):
     def test_lost_connection_with_no_route_counts_as_misses(self):
         net = Path(self.folder, "net")
         Path(net, "wlan0").mkdir(parents=True)
+        self.answers["ping"] = (True, "")
         tools.wifi_check(now=1000.0, route_file=self.route("wlan0\t00000000\t0101A8C0\n"), net_dir=net)
         self.answers["ping"] = (False, "")
         empty = self.route("")
@@ -1000,6 +1017,12 @@ class FindMyPisHubTests(unittest.TestCase):
 
 
 class ToolsCommandTests(unittest.TestCase):
+    def test_router_knock_counts_a_refusal_but_not_silence(self):
+        with mock.patch.object(tools.socket, "create_connection", side_effect=ConnectionRefusedError):
+            self.assertTrue(tools.router_knock("192.168.1.1"))
+        with mock.patch.object(tools.socket, "create_connection", side_effect=TimeoutError):
+            self.assertFalse(tools.router_knock("192.168.1.1"))
+
     def test_watchdog_ignores_odd_interface_names(self):
         folder = tempfile.mkdtemp()
         for name in ("wl;reboot", "wlan0-with-a-very-long-name", "eth0"):
