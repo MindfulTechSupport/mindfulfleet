@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import auth  # noqa: E402
+import discover  # noqa: E402
 import health  # noqa: E402
 from averages import History  # noqa: E402
 
@@ -255,6 +256,11 @@ class Fleet:
             for pi in self._pis.values():
                 pi["last_seen"] -= seconds
 
+    def known_addresses(self):
+        """{address: name} for every computer that reports, for Find my Pis."""
+        with self._lock:
+            return {p["report"]["ip"]: p["report"]["hostname"] for p in self._pis.values() if p["report"].get("ip")}
+
     def snapshot(self):
         now = self._clock()
         with self._lock:
@@ -341,8 +347,9 @@ def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
             return
 
 
-def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
-    """passwords is an auth.Auth. Without one, or before a password is set, the dashboard is open, as before 0.3.0."""
+def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discovery=None):
+    """passwords is an auth.Auth. Without one, or before a password is set, the dashboard is open, as before 0.3.0.
+    discovery is a discover.Discovery for the Find my Pis button."""
     class Handler(BaseHTTPRequestHandler):
         server_version = "MindfulFleet"
         sys_version = ""
@@ -450,6 +457,19 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
                 return self._json(429, {"error": text, "wait": wait}, headers=[("Retry-After", str(wait))])
             return self._json(400, {"error": text})
 
+        def _discover(self):
+            if not self._signed_in():
+                self.close_connection = True
+                return self._refuse_signed_out()
+            if self._read_json(MAX_AUTH_BYTES) is None:
+                return
+            results = discovery.run(fleet.known_addresses())
+            if results is None:
+                return self._json(409, {"error": "Already looking. The results will show in a few seconds."})
+            if "error" in results:
+                return self._json(503, results)
+            self._json(200, results)
+
         def do_GET(self):
             path = self.path.split("?", 1)[0]
             if path == "/api/auth":
@@ -504,6 +524,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None):
             # Read errors close the connection, since the body may be unread.
             if passwords is not None and self.path in ("/api/sign-in", "/api/sign-out", "/api/password"):
                 return self._auth_post(self.path)
+            if discovery is not None and self.path == "/api/discover":
+                return self._discover()
             if self.path != "/api/report":
                 self.close_connection = True
                 return self._json(404, {"error": "not found"})
@@ -651,7 +673,9 @@ def main(argv=None):
 
     fleet = Fleet(args.state)
     stop = threading.Event()
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(fleet, token, passwords=passwords))
+    finder = (lambda known: discover.demo_results()) if args.demo else discover.find_pis
+    handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder))
+    server = ThreadingHTTPServer((args.host, args.port), handler)
     server.daemon_threads = True
 
     def shut_down(*_):

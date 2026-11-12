@@ -252,5 +252,9 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .change-password label { display: grid; gap: 0.25rem; }
 .auth-message { min-height: 1.4em; }
 .account { margin-top: 0.5rem; }
+.find-pis .help { margin: 0.5rem 0; }
+.find-pis-list { list-style: none; margin: 0.25rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+.find-pis-list li { padding: 0.4rem 0.6rem; border: 1.5px solid var(--track); border-radius: 10px; background: var(--card); }
+.find-pis-list .soft { color: var(--soft); font-size: .9em; }
 code { font-family: ui-monospace, monospace; }
 [hidden] { display: none !important; }

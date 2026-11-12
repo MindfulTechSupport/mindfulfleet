@@ -73,6 +73,13 @@
           </form>
           <button id="sign-out" type="button">Sign out</button>
         </details>
+        <details id="find-pis" class="rows account find-pis">
+          <summary>Find my Pis</summary>
+          <p class="help">Lists the Raspberry Pis on the hub's network, including ones not on this dashboard yet. It knocks once on each address and changes nothing. Takes a few seconds.</p>
+          <button id="find-pis-go" type="button">Look now</button>
+          <p id="find-pis-message" class="auth-message" role="status" aria-live="polite"></p>
+          <ul id="find-pis-list" class="find-pis-list"></ul>
+        </details>
         <form id="new-group" class="new-group" hidden>
           <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
           <button type="submit">Add group</button>

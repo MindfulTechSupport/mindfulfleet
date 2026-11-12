@@ -1228,6 +1228,7 @@ function setUpAccount(passwordSet) {
 }
 
 function setUpSignIn() {
+  setUpFindPis();
   const form = document.getElementById("sign-in-form");
   const input = document.getElementById("sign-in-password");
   form.addEventListener("submit", async (event) => {
@@ -1278,6 +1279,53 @@ function setUpSignIn() {
       message.textContent = "Password changed. Every other browser has been signed out.";
     } catch {
       message.textContent = "Can't reach the hub. Your password wasn't changed.";
+    }
+  });
+}
+
+// Find my Pis: the hub looks for Raspberry Pis on its own network. Built with textContent only.
+function findPiLine(pi) {
+  const item = document.createElement("li");
+  const head = document.createElement("strong");
+  head.textContent = pi.reporting ? `${pi.name} (${pi.ip})` : pi.ip;
+  const note = document.createElement("div");
+  note.className = "soft";
+  const parts = [pi.reporting ? "On your dashboard" : "Not on your dashboard yet", `hardware address ${pi.mac}`];
+  if (pi.ssh) parts.push("SSH is on");
+  note.textContent = parts.join(" · ");
+  item.append(head, note);
+  return item;
+}
+
+function setUpFindPis() {
+  const button = document.getElementById("find-pis-go");
+  const message = document.getElementById("find-pis-message");
+  const list = document.getElementById("find-pis-list");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    message.textContent = "Looking…";
+    list.replaceChildren();
+    try {
+      const { ok, status, data } = await sendJson("/api/discover", {});
+      if (status === 401) {
+        signedOut();
+        return;
+      }
+      if (!ok) {
+        message.textContent = data.error || "That didn't work. Try again in a moment.";
+        return;
+      }
+      const found = data.found || [];
+      const fresh = found.filter((pi) => !pi.reporting).length;
+      message.textContent = found.length === 0
+        ? `No Raspberry Pis answered on ${data.network}. Pis on another network, or set to use a made-up hardware address, don't show here.`
+        : `Found ${found.length} Raspberry Pi${found.length === 1 ? "" : "s"} on ${data.network}` +
+          (fresh ? `, ${fresh} not on your dashboard yet. To add one, run the join line the hub showed when it was installed.` : ", all on your dashboard.");
+      list.replaceChildren(...found.map(findPiLine));
+    } catch {
+      message.textContent = "Can't reach the hub. Check it's switched on, then try again.";
+    } finally {
+      button.disabled = false;
     }
   });
 }

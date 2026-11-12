@@ -77,6 +77,12 @@ Two small helpers each computer can use on its own. Neither changes anything unt
 
 **Wi-Fi watchdog: `sudo mindful-fleet wifi-watchdog on`.** Every 2 minutes the computer checks it can reach its router. After about 6 minutes without it, it restarts Wi-Fi. If 3 restarts don't help, it reboots, at most once an hour. It does nothing on a computer that's on a network cable. `wifi-watchdog off` turns it off, `wifi-watchdog status` shows whether it's on, and `journalctl -u mindful-fleet-wifi-watchdog` shows what it did.
 
+## Find my Pis
+
+Settings → **Find my Pis** → **Look now** lists the Raspberry Pis on the hub's network, including ones that aren't on the dashboard yet, with each one's address and whether SSH is on. The hub knocks once on each address so the network learns who's there, then keeps the devices whose hardware address belongs to Raspberry Pi. It logs in to nothing and changes nothing, and it only looks when you press the button.
+
+It can't see Pis on another network or behind another router, or ones set to use a made-up hardware address. It only looks on a home or office network, and on a very large one only at the 254 addresses around the hub.
+
 ## Arrange your dashboard
 
 Pick a **Look**: Tall shows every reading, Wide puts each computer on one row for big fleets, and Gauges shows round dials. Use the **Card width**, **Text size** and **Card height** sliders to fit your screen. With a set height, each card scrolls to show the rest. Use **Choose what cards show** to hide rows you don't need. **Arrange cards** lets you drag cards into your own order and create groups. Your card order, groups, and row choices are saved on the hub, so every browser sees them. Card width, text size and height are saved per browser, so a phone and a big screen can differ.

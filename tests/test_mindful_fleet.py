@@ -17,6 +17,7 @@ sys.path[:0] = [str(ROOT / "hub"), str(ROOT / "reporter"), str(ROOT / "tools")]
 import health  # noqa: E402
 import mindful_fleet_hub as hub  # noqa: E402
 import auth  # noqa: E402
+import discover  # noqa: E402
 import mindful_fleet_reporter as reporter  # noqa: E402
 import averages  # noqa: E402
 import mindful_fleet_tools as tools  # noqa: E402
@@ -785,6 +786,135 @@ class TidyTests(unittest.TestCase):
     def test_sizes_read_plainly(self):
         self.assertEqual(tools.human(512), "512 bytes")
         self.assertEqual(tools.human(1536 * 1024), "1.5 MB")
+
+
+ROUTES = """Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT
+wlan0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0
+wlan0\t0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\t0\t0\t0
+"""
+NETWORK_TABLE = """IP address       HW type     Flags       HW address            Mask     Device
+192.168.1.23     0x1         0x2         d8:3a:dd:12:34:56     *        wlan0
+192.168.1.30     0x1         0x2         aa:bb:cc:dd:ee:ff     *        wlan0
+192.168.1.41     0x1         0x2         B8:27:EB:65:43:21     *        wlan0
+192.168.1.50     0x1         0x0         00:00:00:00:00:00     *        wlan0
+192.168.1.60     0x1         0x2         f0:40:af:9a:bc:de     *        wlan0
+192.168.1.61     0x1         0x2         f0:40:af:1a:bc:de     *        wlan0
+10.9.9.9         0x1         0x2         dc:a6:32:00:00:01     *        eth9
+"""
+
+
+def write(folder, name, text):
+    path = Path(folder, name)
+    path.write_text(text)
+    return str(path)
+
+
+class FindMyPisTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.routes = write(self.folder, "route", ROUTES)
+        self.table = write(self.folder, "arp", NETWORK_TABLE)
+        self.knocked = []
+
+    def knock(self, address):
+        self.knocked.append(str(address))
+        return str(address) == "192.168.1.23"
+
+    def find(self, known=None, routes=None, own="192.168.1.10"):
+        return discover.find_pis(known or {}, routes or self.routes, self.table, knocker=self.knock,
+                                 find_own=lambda gateway: discover.ipaddress.IPv4Address(own), settle=0)
+
+    def test_raspberry_pi_prefixes(self):
+        for mac in ("b8:27:eb:00:00:01", "DC-A6-32-00-00-01", "2ccf67000001", "f0:40:af:9f:ff:ff",
+                    "8c:1f:64:34:a0:01"):
+            with self.subTest(mac=mac):
+                self.assertTrue(discover.is_raspberry_pi(mac))
+        for mac in ("aa:bb:cc:dd:ee:ff", "f0:40:af:1f:ff:ff", "8c:1f:64:34:b0:01", "b8:27:eb", ""):
+            with self.subTest(mac=mac):
+                self.assertFalse(discover.is_raspberry_pi(mac))
+
+    def test_finds_only_pis_on_the_hubs_network(self):
+        results = self.find(known={"192.168.1.41": "attic-pi"})
+        self.assertEqual(results["network"], "192.168.1.0/24")
+        self.assertEqual(results["checked"], 253)  # Every address but the hub's own.
+        self.assertNotIn("192.168.1.10", self.knocked)
+        self.assertEqual([(p["ip"], p["ssh"], p["reporting"], p["name"]) for p in results["found"]], [
+            ("192.168.1.23", True, False, None),
+            ("192.168.1.41", False, True, "attic-pi"),
+            ("192.168.1.60", False, False, None),
+        ])
+        self.assertEqual(results["found"][1]["mac"], "b8:27:eb:65:43:21")
+
+    def test_big_networks_are_narrowed_to_the_hubs_own_slice(self):
+        wide = ROUTES.replace("0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF", "0000A8C0\t00000000\t0001\t0\t0\t600\t0000FFFF")
+        results = self.find(routes=write(self.folder, "wide", wide))
+        self.assertEqual(results["network"], "192.168.1.0/24")
+
+    def test_refuses_public_networks_and_no_router(self):
+        public = ROUTES.replace("0101A8C0", "01000A2D").replace("0001A8C0", "00000A2D")  # 45.10.0.x
+        self.assertIn("error", self.find(routes=write(self.folder, "public", public), own="45.10.0.10"))
+        self.assertIn("error", self.find(routes=write(self.folder, "empty", ROUTES.splitlines()[0] + "\n")))
+        self.assertEqual(self.knocked, [])
+
+    def test_one_look_at_a_time_and_a_short_rest(self):
+        now = [1000.0]
+        looks = []
+
+        def finder(known):
+            looks.append(1)
+            return {"network": "192.168.1.0/24", "checked": 1, "when": now[0],
+                    "found": [{"ip": "192.168.1.23", "mac": "d8:3a:dd:12:34:56", "ssh": True,
+                               "reporting": False, "name": None}]}
+
+        finding = discover.Discovery(finder, clock=lambda: now[0])
+        finding.run({})
+        again = finding.run({"192.168.1.23": "new-pi"})
+        self.assertEqual(len(looks), 1)
+        self.assertEqual(again["found"][0]["name"], "new-pi")  # Names stay current between looks.
+        now[0] += discover.REST_SECONDS
+        finding.run({})
+        self.assertEqual(len(looks), 2)
+        with finding._busy:
+            self.assertIsNone(finding.run({}))
+
+
+class FindMyPisHubTests(unittest.TestCase):
+    call = SignInTests.call
+    sign_in = SignInTests.sign_in
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.passwords = auth.Auth(Path(self.folder, "password.json"), iterations=1000)
+        self.passwords.set_password("my pis run cool")
+        self.fleet = hub.Fleet()
+        self.fleet.record(hub.clean_report(report(ip="192.168.1.41", hostname="attic-pi")))
+        self.seen = []
+
+        def finder(known):
+            self.seen.append(known)
+            return discover.demo_results()
+
+        handler = hub.make_handler(self.fleet, "secret", passwords=self.passwords,
+                                   discovery=discover.Discovery(finder))
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def test_needs_sign_in_and_same_site(self):
+        self.assertEqual(self.call("/api/discover", {})[0], 401)
+        _, session, _ = self.sign_in()
+        self.assertEqual(self.call("/api/discover", {}, cookie=session,
+                                   headers={"Origin": "http://evil.example"})[0], 404)
+        self.assertEqual(self.seen, [])
+
+    def test_signed_in_look_lists_pis_and_who_reports(self):
+        _, session, _ = self.sign_in()
+        status, body, _ = self.call("/api/discover", {}, cookie=session)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["found"]), 2)
+        self.assertEqual(self.seen, [{"192.168.1.41": "attic-pi"}])
 
 
 class XmrigTests(unittest.TestCase):

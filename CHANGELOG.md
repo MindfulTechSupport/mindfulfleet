@@ -2,6 +2,7 @@
 
 ## Not released yet
 
+- Find my Pis: Settings → Find my Pis → Look now lists the Raspberry Pis on the hub's network, marks which are already on the dashboard, and shows whether SSH is on. Read-only, and only when you press the button.
 - `sudo mindful-fleet tidy` frees up space on a computer: it shows what it would clear (downloaded update files, and the system log beyond its newest 100 MB), asks first, and shows the space freed. It can also keep the log under 100 MB from now on, for less SD card wear; `tidy undo` removes that limit.
 - `sudo mindful-fleet wifi-watchdog on` reconnects Wi-Fi by itself: after about 6 minutes without the router it restarts Wi-Fi, and after 3 restarts that don't help it reboots, at most once an hour. Off by default.
 - The "Remove it" steps now also remove the update timer, the Wi-Fi watchdog and the log limit.
