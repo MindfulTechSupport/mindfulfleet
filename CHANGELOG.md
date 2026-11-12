@@ -1,6 +1,6 @@
 # Changelog
 
-## Not released yet
+## 0.2.12 (2026-11-11)
 
 - Find my Pis: Settings → Find my Pis → Look now lists the Raspberry Pis on the hub's network (the 254 addresses around the hub), marks which are already on the dashboard, and shows whether SSH is on. Read-only, only when you press the button, and only once the dashboard has a password.
 - `sudo mindful-fleet tidy` frees up space on a computer: it shows what it would clear (downloaded update files, and the system log beyond its newest 100 MB), asks first, and shows the space freed. It can also keep the log under 100 MB from now on, for less SD card wear; `tidy undo` removes that limit.
