@@ -1091,6 +1091,13 @@ const MODES = [["auto", "Match my device"], ["light", "Light"], ["dark", "Dark"]
 let previewPalette = null;
 const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
+// The palette to show: a preview, else the saved choice if it can be used, else Lavender. The saved choice
+// itself is never changed here, so a Plus palette comes back once Plus is active again.
+function shownPalette() {
+  if (previewPalette) return previewPalette;
+  return usable(layout.palette) ? layout.palette : "lavender";
+}
+
 function usable(key) {
   return Boolean(PALETTES[key]) && (!PALETTES[key].plus || PLUS_ACTIVE);
 }
@@ -1098,14 +1105,11 @@ function usable(key) {
 function wantsDark() {
   if (layout.mode === "dark") return true;
   if (layout.mode === "light") return false;
-  const theme = document.documentElement.getAttribute("data-theme");  // Set by some pages that embed the dashboard.
-  if (theme === "dark" || theme === "light") return theme === "dark";
   return Boolean(darkQuery && darkQuery.matches);
 }
 
 function applyColors() {
-  const key = previewPalette || (usable(layout.palette) ? layout.palette : "lavender");
-  const palette = PALETTES[key];
+  const palette = PALETTES[shownPalette()];
   if (!palette) return;
   const dark = wantsDark();
   const status = PALETTE_DATA.status;
@@ -1130,8 +1134,7 @@ function setUpColors() {
     (info.plus ? plus : free).appendChild(option);
   }
   palette.append(free, plus);
-  if (!usable(layout.palette)) layout.palette = "lavender";
-  palette.value = layout.palette;
+  palette.value = shownPalette();
   for (const [value, label] of MODES) {
     const option = el("option", "", label);
     option.value = value;
@@ -1148,7 +1151,7 @@ function setUpColors() {
     } else {
       previewPalette = palette.value;
       note.textContent = `Previewing ${info.name}, a MindfulFleet Plus palette. Next time you open the dashboard it goes back to ` +
-        `${PALETTES[layout.palette].name}. MindfulFleet Plus is coming soon.`;
+        `${PALETTES[usable(layout.palette) ? layout.palette : "lavender"].name}. MindfulFleet Plus is coming soon.`;
       note.hidden = false;
     }
     applyColors();
@@ -1158,9 +1161,12 @@ function setUpColors() {
     saveLayout();
     applyColors();
   });
-  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyColors);
   applyColors();
 }
+
+if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyColors);
+else if (darkQuery && darkQuery.addListener) darkQuery.addListener(applyColors);  // Safari before 14.
+applyColors();  // Right away, so the sign-in page and the first frame already use the chosen colors.
 
 function setUpTools() {
   setUpRowPicker();

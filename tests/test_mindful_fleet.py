@@ -450,7 +450,8 @@ class PaletteTests(unittest.TestCase):
             for mode, colors in (("light", light), ("dark", dark)):
                 with self.subTest(palette=key, mode=mode):
                     for text, ground, need in [("ink", "bg", 4.5), ("ink", "card", 4.5), ("soft", "card", 4.5),
-                                               ("soft", "bg", 4.5), ("neutral", "card", 3),
+                                               ("soft", "bg", 4.5), ("neutral", "card", 3), ("card", "neutral", 4.5),
+                                               ("neutral", "track", 3),
                                                *[(s, "card", 4.5) for s in ("ok", "warn", "bad", "off")],
                                                *[("face", f"{s}-body", 4.5) for s in ("ok", "warn", "bad", "off")]]:
                         self.assertGreaterEqual(contrast(colors[text], colors[ground]), need, f"{text} on {ground}")

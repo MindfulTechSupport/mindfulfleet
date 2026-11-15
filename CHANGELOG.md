@@ -2,8 +2,8 @@
 
 ## Not released yet
 
-- Colors: Settings → Colors offers 12 palettes. Lavender (today's look), Ocean and Clear are free; Clear has extra contrast and status colors chosen to stay distinct for colour-blind eyes. The other nine (Forest, Sunset, Graphite, Rose, Sand, Plum, Mint, Citrus, Arctic) are for MindfulFleet Plus; until Plus is available you can preview them for one visit. Settings → Light or dark: match your device, or always light or dark. Each browser keeps its own choice.
-- The "doing fine" green text is a little darker, so it's easier to read on white.
+- Colors: Settings → Colors offers 12 palettes. Lavender (today's look), Ocean and Clear are free; Clear has extra contrast and status colors chosen to stay distinct for color-blind eyes. The other nine (Forest, Sunset, Graphite, Rose, Sand, Plum, Mint, Citrus, Arctic) are for MindfulFleet Plus; until Plus is available you can preview them for one visit. Settings → Light or dark: match your device, or always light or dark. Each browser keeps its own choice.
+- The "doing fine" green text and the accent color are a little darker, so text and pressed buttons are easier to read.
 
 ## 0.2.12 (2026-11-11)
 
