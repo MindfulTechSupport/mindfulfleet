@@ -403,7 +403,7 @@ class HubTests(unittest.TestCase):
         self.assertEqual(self.fleet_json()["pis"][0]["health"]["status"], "ok")
 
     def test_dashboard_files_served_with_security_headers(self):
-        for path in ("/", "/app.js", "/style.css"):
+        for path in ("/", "/app.js", "/style.css", "/palettes.js"):
             with urllib.request.urlopen(self.base + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
@@ -414,6 +414,42 @@ class HubTests(unittest.TestCase):
                 urllib.request.urlopen(self.base + path)
             self.assertEqual(caught.exception.code, 404)
 
+
+
+def contrast(a, b):
+    def luminance(color):
+        values = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        values = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in values]
+        return 0.2126 * values[0] + 0.7152 * values[1] + 0.0722 * values[2]
+    high, low = sorted([luminance(a), luminance(b)], reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+class PaletteTests(unittest.TestCase):
+    """Every palette stays readable in light and dark (WCAG AA: 4.5 for text, 3 for bars and charts)."""
+
+    @classmethod
+    def setUpClass(cls):
+        text = Path(ROOT, "hub", "dashboard", "palettes.js").read_text()
+        cls.palettes = json.loads(text[text.index("{"):text.rindex("}") + 1])
+
+    def test_three_free_and_nine_plus(self):
+        free = [key for key, info in self.palettes.items() if not info["plus"]]
+        self.assertEqual(free, ["lavender", "ocean", "clear"])
+        self.assertEqual(sum(info["plus"] for info in self.palettes.values()), 9)
+
+    def test_every_color_is_set_and_readable(self):
+        needed = {"bg", "card", "track", "ink", "soft", "neutral", "face", "ok", "warn", "bad", "off",
+                  "ok-body", "warn-body", "bad-body", "off-body"}
+        for key, info in self.palettes.items():
+            self.assertEqual(set(info["light"]), needed, key)
+            for mode, colors in (("light", info["light"]), ("dark", {**info["light"], **info["dark"]})):
+                with self.subTest(palette=key, mode=mode):
+                    for text, ground, need in [("ink", "bg", 4.5), ("ink", "card", 4.5), ("soft", "card", 4.5),
+                                               ("soft", "bg", 4.5), ("neutral", "card", 3),
+                                               *[(s, "card", 4.5) for s in ("ok", "warn", "bad", "off")],
+                                               *[("face", f"{s}-body", 4.5) for s in ("ok", "warn", "bad", "off")]]:
+                        self.assertGreaterEqual(contrast(colors[text], colors[ground]), need, f"{text} on {ground}")
 
 class PasswordTests(unittest.TestCase):
     def test_hash_checks_only_the_right_password(self):

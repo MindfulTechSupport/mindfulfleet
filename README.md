@@ -69,6 +69,10 @@ curl -fsSL https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/rel
 
 Before running any script from the internet, you're welcome to read it first: it's [install.sh](install.sh) in this repository.
 
+## Colors
+
+Settings → **Colors** changes the dashboard's palette, and **Light or dark** picks light, dark, or whatever your device uses. Lavender, Ocean and Clear (extra contrast, colour-blind friendly) are free; nine more palettes come with MindfulFleet Plus. Each browser remembers its own choice.
+
 ## Pi tools
 
 Two small helpers each computer can use on its own. Neither changes anything until you run it.

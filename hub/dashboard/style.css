@@ -5,7 +5,7 @@
   --card: #ffffff;
   --track: #e3e5f3;
   --neutral: #6d74c4;
-  --ok: #1f8a5b;
+  --ok: #1a7d52;
   --ok-body: #8fdcb4;
   --warn: #9a6200;
   --warn-body: #ffcf6e;
@@ -71,7 +71,7 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .small { padding: 4px 10px; }
 .fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-width, 340px)), 1fr)); gap: 18px; align-items: start; }
 .pi { background: var(--card); border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; }
-.pi-head { display: flex; align-items: center; gap: 14px; padding: 16px 18px; color: #23264a; }
+.pi-head { display: flex; align-items: center; gap: 14px; padding: 16px 18px; color: var(--face); }
 .ok .pi-head { background: var(--ok-body); }
 .warn .pi-head { background: var(--warn-body); }
 .bad .pi-head { background: var(--bad-body); }

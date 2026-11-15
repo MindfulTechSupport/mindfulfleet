@@ -36,6 +36,15 @@
           </label>
           <button id="expand-all" type="button" aria-pressed="false" hidden>Expand all</button>
         </div>
+        <div class="look-row">
+          <label class="size pick"><span>Colors</span>
+            <select id="palette" aria-label="Color palette"></select>
+          </label>
+          <label class="size pick"><span>Light or dark</span>
+            <select id="mode" aria-label="Light or dark"></select>
+          </label>
+        </div>
+        <p id="palette-note" class="help" role="status" hidden></p>
         <label class="size"><span>Card width</span>
           <input id="width" type="range" min="200" max="640" step="1" value="340">
           <span id="width-value" class="slider-value"></span>
@@ -98,6 +107,7 @@
   <footer class="foot">
     <p>Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. MindfulFleet is an independent project, not made or endorsed by Raspberry Pi Ltd.</p>
   </footer>
+  <script src="/palettes.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -47,7 +47,7 @@ let dragging = null;
 let latestPis = [];
 
 function loadLayout() {
-  const empty = { expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
+  const empty = { palette: "lavender", mode: "auto", expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch {
@@ -1082,8 +1082,86 @@ function setUpRowPicker() {
   }
 }
 
+// Color palettes (palettes.js). Three are free; the rest are MindfulFleet Plus. Until Plus can be bought, a Plus
+// palette is a preview for this visit only and isn't saved. Each browser keeps its own choice, like text size.
+const PALETTES = window.MF_PALETTES || {};
+const PLUS_ACTIVE = false;
+const MODES = [["auto", "Match my device"], ["light", "Light"], ["dark", "Dark"]];
+let previewPalette = null;
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function usable(key) {
+  return Boolean(PALETTES[key]) && (!PALETTES[key].plus || PLUS_ACTIVE);
+}
+
+function wantsDark() {
+  if (layout.mode === "dark") return true;
+  if (layout.mode === "light") return false;
+  const theme = document.documentElement.getAttribute("data-theme");  // Set by some pages that embed the dashboard.
+  if (theme === "dark" || theme === "light") return theme === "dark";
+  return Boolean(darkQuery && darkQuery.matches);
+}
+
+function applyColors() {
+  const key = previewPalette || (usable(layout.palette) ? layout.palette : "lavender");
+  const palette = PALETTES[key];
+  if (!palette) return;
+  const dark = wantsDark();
+  const colors = dark ? { ...palette.light, ...palette.dark } : palette.light;
+  const root = document.documentElement.style;
+  for (const [name, value] of Object.entries(colors)) root.setProperty(`--${name}`, value);
+  root.setProperty("color-scheme", dark ? "dark" : "light");
+}
+
+function setUpColors() {
+  const palette = document.getElementById("palette");
+  const mode = document.getElementById("mode");
+  const note = document.getElementById("palette-note");
+  const free = el("optgroup");
+  free.label = "Free";
+  const plus = el("optgroup");
+  plus.label = "MindfulFleet Plus";
+  for (const [key, info] of Object.entries(PALETTES)) {
+    const option = el("option", "", info.plus && !PLUS_ACTIVE ? `${info.name} (Plus)` : info.name);
+    option.value = key;
+    (info.plus ? plus : free).appendChild(option);
+  }
+  palette.append(free, plus);
+  if (!usable(layout.palette)) layout.palette = "lavender";
+  palette.value = layout.palette;
+  for (const [value, label] of MODES) {
+    const option = el("option", "", label);
+    option.value = value;
+    mode.appendChild(option);
+  }
+  mode.value = MODES.some(([value]) => value === layout.mode) ? layout.mode : "auto";
+  palette.addEventListener("change", () => {
+    const info = PALETTES[palette.value];
+    if (usable(palette.value)) {
+      previewPalette = null;
+      layout.palette = palette.value;
+      saveLayout();
+      note.hidden = true;
+    } else {
+      previewPalette = palette.value;
+      note.textContent = `Previewing ${info.name}, a MindfulFleet Plus palette. Next time you open the dashboard it goes back to ` +
+        `${PALETTES[layout.palette].name}. MindfulFleet Plus is coming soon.`;
+      note.hidden = false;
+    }
+    applyColors();
+  });
+  mode.addEventListener("change", () => {
+    layout.mode = mode.value;
+    saveLayout();
+    applyColors();
+  });
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyColors);
+  applyColors();
+}
+
 function setUpTools() {
   setUpRowPicker();
+  setUpColors();
   const look = document.getElementById("look");
   for (const [value, label] of LOOKS) {
     const option = el("option", "", label);

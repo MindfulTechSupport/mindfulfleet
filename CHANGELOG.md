@@ -1,5 +1,10 @@
 # Changelog
 
+## Not released yet
+
+- Colors: Settings → Colors offers 12 palettes. Lavender (today's look), Ocean and Clear are free; Clear has extra contrast and status colors chosen to stay distinct for colour-blind eyes. The other nine (Forest, Sunset, Graphite, Rose, Sand, Plum, Mint, Citrus, Arctic) are for MindfulFleet Plus; until Plus is available you can preview them for one visit. Settings → Light or dark: match your device, or always light or dark. Each browser keeps its own choice.
+- The "doing fine" green text is a little darker, so it's easier to read on white.
+
 ## 0.2.12 (2026-11-11)
 
 - Find my Pis: Settings → Find my Pis → Look now lists the Raspberry Pis on the hub's network (the 254 addresses around the hub), marks which are already on the dashboard, and shows whether SSH is on. Read-only, only when you press the button, and only once the dashboard has a password.
