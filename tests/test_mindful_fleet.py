@@ -431,7 +431,9 @@ class PaletteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         text = Path(ROOT, "hub", "dashboard", "palettes.js").read_text()
-        cls.palettes = json.loads(text[text.index("{"):text.rindex("}") + 1])
+        data = json.loads(text[text.index("{"):text.rindex("}") + 1])
+        cls.palettes = data["palettes"]
+        cls.status = data["status"]
 
     def test_three_free_and_nine_plus(self):
         free = [key for key, info in self.palettes.items() if not info["plus"]]
@@ -442,8 +444,10 @@ class PaletteTests(unittest.TestCase):
         needed = {"bg", "card", "track", "ink", "soft", "neutral", "face", "ok", "warn", "bad", "off",
                   "ok-body", "warn-body", "bad-body", "off-body"}
         for key, info in self.palettes.items():
-            self.assertEqual(set(info["light"]), needed, key)
-            for mode, colors in (("light", info["light"]), ("dark", {**info["light"], **info["dark"]})):
+            light = {**self.status["light"], **info["light"]}
+            dark = {**light, **self.status["dark"], **info["dark"]}
+            self.assertEqual(set(light), needed, key)
+            for mode, colors in (("light", light), ("dark", dark)):
                 with self.subTest(palette=key, mode=mode):
                     for text, ground, need in [("ink", "bg", 4.5), ("ink", "card", 4.5), ("soft", "card", 4.5),
                                                ("soft", "bg", 4.5), ("neutral", "card", 3),

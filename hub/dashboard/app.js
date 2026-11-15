@@ -1084,7 +1084,8 @@ function setUpRowPicker() {
 
 // Color palettes (palettes.js). Three are free; the rest are MindfulFleet Plus. Until Plus can be bought, a Plus
 // palette is a preview for this visit only and isn't saved. Each browser keeps its own choice, like text size.
-const PALETTES = window.MF_PALETTES || {};
+const PALETTE_DATA = window.MF_PALETTES || { status: { light: {}, dark: {} }, palettes: {} };
+const PALETTES = PALETTE_DATA.palettes;
 const PLUS_ACTIVE = false;
 const MODES = [["auto", "Match my device"], ["light", "Light"], ["dark", "Dark"]];
 let previewPalette = null;
@@ -1107,7 +1108,9 @@ function applyColors() {
   const palette = PALETTES[key];
   if (!palette) return;
   const dark = wantsDark();
-  const colors = dark ? { ...palette.light, ...palette.dark } : palette.light;
+  const status = PALETTE_DATA.status;
+  const light = { ...status.light, ...palette.light };
+  const colors = dark ? { ...light, ...status.dark, ...palette.dark } : light;
   const root = document.documentElement.style;
   for (const [name, value] of Object.entries(colors)) root.setProperty(`--${name}`, value);
   root.setProperty("color-scheme", dark ? "dark" : "light");
