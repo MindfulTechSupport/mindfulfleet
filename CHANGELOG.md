@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.14 (2026-11-16)
+
+- Gauges and Wide looks: Per watt now has its ring (and its bar in Wide), filled against a 120 H/s per watt scale, like Power use against 12 W. How many cores are mining still shows under Mining in the readings.
+- The LICENSE names the copyright holder in full: Mindful Tech Projects, a Division of Mindful Associates, LLC.
+
 ## 0.2.13 (2026-11-14)
 
 - Colors: Settings → Colors offers 12 palettes. Lavender (today's look), Ocean and Clear are free; Clear has extra contrast and status colors chosen to stay distinct for color-blind eyes. The other nine (Forest, Sunset, Graphite, Rose, Sand, Plum, Mint, Citrus, Arctic) are for MindfulFleet Plus; until Plus is available you can preview them for one visit. Settings → Light or dark: match your device, or always light or dark. Each browser keeps its own choice.
