@@ -456,6 +456,17 @@ class PaletteTests(unittest.TestCase):
                                                *[("face", f"{s}-body", 4.5) for s in ("ok", "warn", "bad", "off")]]:
                         self.assertGreaterEqual(contrast(colors[text], colors[ground]), need, f"{text} on {ground}")
 
+class GaugeTests(unittest.TestCase):
+    """Every headline reading draws its ring. Per watt once showed a number with no ring."""
+
+    def test_every_headline_reading_has_a_scale(self):
+        text = Path(ROOT, "hub", "dashboard", "app.js").read_text()
+        readings = text[text.index("function keyReadings("):text.index("function gaugeCard(")]
+        self.assertNotIn("percent: null", readings)
+        self.assertIn("perWatt / PER_WATT_SCALE * 100", readings)
+        self.assertIn("const PER_WATT_SCALE = 120;", text)
+
+
 class PasswordTests(unittest.TestCase):
     def test_hash_checks_only_the_right_password(self):
         record = auth.hash_password("correct horse battery", iterations=1000)

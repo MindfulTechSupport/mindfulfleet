@@ -24,6 +24,7 @@ let layoutSaveTimer = null;
 
 const LOOKS = [["tall", "Tall"], ["wide", "Wide"], ["gauges", "Gauges"]];
 const POWER_SCALE_WATTS = 12; // About the most a busy Pi 5 board draws, so the dial has room.
+const PER_WATT_SCALE = 120; // Hashes per watt. A well-tuned Pi 5 lands near 90, so the dial has room.
 const expanded = new Set(); // Cards opened one by one, in this browser only.
 const collapsed = new Set(); // Cards closed one by one while "Expand all" is on.
 const HISTORY_REFRESH_MS = 60000;
@@ -658,7 +659,7 @@ function gauge({ label, value, unit, percent, level = "", limit }) {
   const wrap = el("figure", `gauge ${level}`.trim());
   const root = svg("svg", { viewBox: "0 0 100 86", role: "img", "aria-label": `${label}: ${value}${unit ? ` ${unit}` : ""}${limit ? `, ${limit}` : ""}` });
   const arc = "M 18 78 A 40 40 0 1 1 82 78";
-  // Readings with no upper limit, like hashes per watt, show just the number.
+  // A reading with no upper limit shows just the number.
   if (percent != null) svg("path", { d: arc, class: "gauge-track", pathLength: 100 }, root);
   const filled = Math.max(0, Math.min(100, percent ?? 0));
   if (percent != null && filled > 0) svg("path", { d: arc, class: "gauge-fill", pathLength: 100, "stroke-dasharray": `${filled} 100` }, root);
@@ -693,7 +694,8 @@ function keyReadings(pi) {
     const [value, unit] = compactHashes(pi.hashrate);
     add("mining", { key: "hashrate", label: "Hashrate", value, unit, percent: best ? pi.hashrate / best * 100 : 0, limit: `best ${hashes(best)}` });
     if (pi.board_watts) {
-      add("mining", { key: "hpw", label: "Per watt", value: (pi.hashrate / pi.board_watts).toFixed(1), unit: "H/s/W", percent: null, limit: pi.mining_threads != null ? `${pi.mining_threads} of ${h.cpu.total} cores mining` : "" });
+      const perWatt = pi.hashrate / pi.board_watts;
+      add("mining", { key: "hpw", label: "Per watt", value: perWatt.toFixed(1), unit: "H/s/W", percent: perWatt / PER_WATT_SCALE * 100, limit: `of ${PER_WATT_SCALE} H/s/W scale` });
     }
   }
   if (pi.board_watts != null) {
