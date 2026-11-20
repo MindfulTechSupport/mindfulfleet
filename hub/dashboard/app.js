@@ -46,6 +46,7 @@ const layout = loadLayout();
 let arranging = false;
 let dragging = null;
 let latestPis = [];
+let plan = { name: "free", plus: false, pro: false }; // From the hub: which paid features it may use.
 
 function loadLayout() {
   const empty = { palette: "lavender", mode: "auto", expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
@@ -650,7 +651,7 @@ function tallCard(pi, section) {
   const issues = issuesList(pi);
   if (issues) body.appendChild(issues);
   body.append(...readings(pi));
-  article.append(cardHead(pi), body);
+  article.append(...[historySwitch(pi), cardHead(pi), body].filter(Boolean));
   return article;
 }
 
@@ -737,7 +738,7 @@ function gaugeCard(pi, section) {
   for (const item of keyReadings(pi)) dials.appendChild(gauge(item));
   body.appendChild(dials);
   detailsToggle(pi, body);
-  article.append(cardHead(pi), body);
+  article.append(...[historySwitch(pi), cardHead(pi), body].filter(Boolean));
   return article;
 }
 
@@ -780,6 +781,8 @@ function wideRow(pi, section) {
   if (arranging) body.appendChild(arrangeBar(pi, section));
   const top = el("div", "wide-top");
   top.append(who, cells);
+  const switcher = historySwitch(pi);
+  if (switcher) body.appendChild(switcher);
   body.appendChild(top);
   const issues = issuesList(pi);
   if (issues) body.appendChild(issues);
@@ -1014,8 +1017,19 @@ async function refresh() {
       return;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { pis, latest_version: latest, password_set: passwordSet } = await response.json();
+    const { pis, latest_version: latest, password_set: passwordSet, plan: planNow, history: info } = await response.json();
     setUpAccount(!!passwordSet);
+    if (planNow && planNow.plus !== plan.plus) {
+      plan = planNow;
+      for (const option of document.querySelectorAll("#palette option")) {
+        if (option.dataset.name) option.textContent = option.dataset.plus && !plan.plus ? `${option.dataset.name} (Plus)` : option.dataset.name;
+      }
+      applyColors();
+      if (view.open) void loadHistoryView();
+    } else if (planNow) {
+      plan = planNow;
+    }
+    historyInfo = info || null;
     latestPis = pis;
     latestVersion = latest;
     connection.hidden = true;
@@ -1088,7 +1102,6 @@ function setUpRowPicker() {
 // palette is a preview for this visit only and isn't saved. Each browser keeps its own choice, like text size.
 const PALETTE_DATA = window.MF_PALETTES || { status: { light: {}, dark: {} }, palettes: {} };
 const PALETTES = PALETTE_DATA.palettes;
-const PLUS_ACTIVE = false;
 const MODES = [["auto", "Match my device"], ["light", "Light"], ["dark", "Dark"]];
 let previewPalette = null;
 const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -1101,7 +1114,7 @@ function shownPalette() {
 }
 
 function usable(key) {
-  return Boolean(PALETTES[key]) && (!PALETTES[key].plus || PLUS_ACTIVE);
+  return Boolean(PALETTES[key]) && (!PALETTES[key].plus || plan.plus);
 }
 
 function wantsDark() {
@@ -1131,8 +1144,10 @@ function setUpColors() {
   const plus = el("optgroup");
   plus.label = "MindfulFleet Plus";
   for (const [key, info] of Object.entries(PALETTES)) {
-    const option = el("option", "", info.plus && !PLUS_ACTIVE ? `${info.name} (Plus)` : info.name);
+    const option = el("option", "", info.plus && !plan.plus ? `${info.name} (Plus)` : info.name);
     option.value = key;
+    option.dataset.name = info.name;
+    option.dataset.plus = info.plus ? "1" : "";
     (info.plus ? plus : free).appendChild(option);
   }
   palette.append(free, plus);
@@ -1173,6 +1188,7 @@ applyColors();  // Right away, so the sign-in page and the first frame already u
 function setUpTools() {
   setUpRowPicker();
   setUpColors();
+  setUpHistory();
   const look = document.getElementById("look");
   for (const [value, label] of LOOKS) {
     const option = el("option", "", label);
@@ -1450,3 +1466,643 @@ async function begin() {
 }
 
 void begin();
+
+/* History (MindfulFleet Plus): each Pi's readings kept on the hub for up to 3 years. Export is Pro. */
+
+let historyInfo = null; // From the hub: settings per Pi, space used, limits.
+const customEvery = new Set(); // Cards (or "all") showing the Custom interval boxes.
+const HISTORY_COLORS = 6;
+const VIEW_METRICS = [
+  ["temp", "Temperature", "°C", (v) => v.toFixed(1)],
+  ["hashrate", "Hashrate", "H/s", (v) => Math.round(v).toLocaleString()],
+  ["per_watt", "Hashes per watt", "H/s/W", (v) => v.toFixed(1)],
+  ["watts", "Power use", "W", (v) => v.toFixed(2)],
+  ["fan", "Fan", "RPM", (v) => Math.round(v).toLocaleString()],
+  ["slowed", "Time slowed down", "%", (v) => Math.round(v)],
+  ["clock", "Clock", "GHz", (v) => (v / 1000).toFixed(2)],
+  ["cpu", "CPU", "%", (v) => Math.round(v)],
+  ["memory", "Memory", "%", (v) => Math.round(v)],
+  ["load", "Load", "", (v) => v.toFixed(2)],
+  ["volts", "Input voltage", "V", (v) => v.toFixed(2)],
+  ["wifi", "Wi-Fi signal", "dBm", (v) => Math.round(v)],
+  ["sensor_watts", "Sensor power", "W", (v) => v.toFixed(2)],
+  ["net_in", "Network in", "", (v) => rate(v)],
+  ["net_out", "Network out", "", (v) => rate(v)],
+  ["disk_read", "Disk reads", "", (v) => rate(v)],
+  ["disk_write", "Disk writes", "", (v) => rate(v)],
+];
+const COMPARE_ROWS = ["temp", "hashrate", "per_watt", "watts", "fan", "slowed", "clock", "cpu"];
+const RANGES = [["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"],
+  ["365", "Last year"], ["1095", "Last 3 years"], ["custom", "Pick dates"]];
+const view = { open: false, ids: null, reading: "temp", range: "7", from: "", to: "", data: null, markers: [], compare: null, message: "" };
+
+function everyWords(seconds) {
+  if (seconds % 86400 === 0) return seconds === 86400 ? "1 day" : `${seconds / 86400} days`;
+  if (seconds % 3600 === 0) return seconds === 3600 ? "1 hour" : `${seconds / 3600} hours`;
+  if (seconds % 60 === 0) return `${seconds / 60} min`;
+  return `${seconds} s`;
+}
+
+function toast(text) {
+  const note = el("p", "toast", text);
+  note.setAttribute("role", "status");
+  document.body.appendChild(note);
+  setTimeout(() => note.remove(), 7000);
+}
+
+async function sendHistory(method, path, body) {
+  const response = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // An empty or odd reply still has a status.
+  }
+  if (response.status === 401) signedOut();
+  return { ok: response.ok, data };
+}
+
+async function saveHistorySetting(ids, change) {
+  const { ok, data } = await sendHistory("PUT", "/api/history/settings", { ids, ...change });
+  if (!ok) {
+    toast(data.error || "The hub couldn't save that. Try again in a moment.");
+    return;
+  }
+  if (historyInfo) historyInfo.settings = data.settings;
+  render();
+  if (view.open) renderHistoryView();
+}
+
+/* The interval menu: Ed's list plus 1 hour and 6 hours, and Custom for anything else. */
+function intervalPicker(key, every, label, onPick) {
+  const wrap = el("span", "every");
+  const choices = (historyInfo && historyInfo.intervals) || [15, 30, 60, 180, 300, 900, 1800, 3600, 21600, 86400];
+  if (customEvery.has(key)) {
+    const amount = el("input");
+    amount.type = "number";
+    amount.min = "1";
+    amount.step = "1";
+    amount.value = String(every % 3600 === 0 ? every / 3600 : every % 60 === 0 ? every / 60 : every);
+    amount.setAttribute("aria-label", `${label}: how many`);
+    const unit = el("select");
+    unit.setAttribute("aria-label", `${label}: seconds, minutes, hours or days`);
+    for (const [value, words] of [["1", "seconds"], ["60", "minutes"], ["3600", "hours"], ["86400", "days"]]) {
+      const option = el("option", "", words);
+      option.value = value;
+      unit.appendChild(option);
+    }
+    unit.value = every % 3600 === 0 ? "3600" : every % 60 === 0 ? "60" : "1";
+    const save = button("Save", `Save ${label}`, () => {
+      const seconds = Math.round(Number(amount.value) * Number(unit.value));
+      const min = (historyInfo && historyInfo.min_interval) || 15;
+      const max = (historyInfo && historyInfo.max_interval) || 604800;
+      if (!Number.isFinite(seconds) || seconds < min || seconds > max) {
+        toast(`Pick between ${min} seconds and 7 days. ${min} seconds is how often a Pi reports.`);
+        return;
+      }
+      customEvery.delete(key);
+      onPick(seconds);
+    });
+    const cancel = button("Cancel", "Keep the interval as it was", () => {
+      customEvery.delete(key);
+      render();
+      if (view.open) renderHistoryView();
+    });
+    wrap.append(el("span", "every-label", "Every"), amount, unit, save, cancel);
+    return wrap;
+  }
+  const select = el("select");
+  select.setAttribute("aria-label", label);
+  const options = choices.includes(every) ? choices : [...choices, every].sort((a, b) => a - b);
+  for (const seconds of options) {
+    const option = el("option", "", `Every ${everyWords(seconds)}`);
+    option.value = String(seconds);
+    select.appendChild(option);
+  }
+  const custom = el("option", "", "Custom…");
+  custom.value = "custom";
+  select.appendChild(custom);
+  select.value = String(every);
+  select.addEventListener("change", () => {
+    if (select.value === "custom") {
+      customEvery.add(key);
+      select.blur();
+      render();
+      if (view.open) renderHistoryView();
+      return;
+    }
+    select.blur();
+    onPick(Number(select.value));
+  });
+  wrap.appendChild(select);
+  return wrap;
+}
+
+/* The switch at the top of each card. */
+function historySwitch(pi) {
+  if (!historyInfo) return null;
+  const wrap = el("div", "history-switch");
+  if (!plan.plus) {
+    const locked = button("History · Plus", "History keeps this Pi's readings for up to 3 years. It's part of MindfulFleet Plus.", () => {
+      toast("History keeps each Pi's readings on your hub for up to 3 years, with charts and markers. It's part of MindfulFleet Plus, coming soon.");
+    });
+    locked.classList.add("locked");
+    wrap.appendChild(locked);
+    return wrap;
+  }
+  const setting = historyInfo.settings[pi.id] || { enabled: false, every: 60 };
+  const toggle = button(setting.enabled ? "History on" : "History off",
+    `${setting.enabled ? "Stop" : "Start"} saving ${pi.hostname}'s readings`, () => saveHistorySetting([pi.id], { enabled: !setting.enabled }));
+  toggle.setAttribute("aria-pressed", String(setting.enabled));
+  wrap.appendChild(toggle);
+  if (setting.enabled) wrap.appendChild(intervalPicker(pi.id, setting.every, `How often to save ${pi.hostname}'s snapshot`, (every) => saveHistorySetting([pi.id], { every })));
+  return wrap;
+}
+
+/* The History page */
+
+function rangeTimes() {
+  const now = Math.floor(Date.now() / 1000);
+  if (view.range === "custom") {
+    const from = view.from ? new Date(`${view.from}T00:00`).getTime() / 1000 : now - 7 * 86400;
+    const to = view.to ? new Date(`${view.to}T00:00`).getTime() / 1000 + 86400 : now;
+    return [Math.floor(from), Math.min(Math.floor(to), now + 86400)];
+  }
+  return [now - Number(view.range) * 86400, now];
+}
+
+function chosenIds() {
+  if (view.ids) return view.ids.filter((id) => latestPis.some((pi) => pi.id === id));
+  const on = latestPis.filter((pi) => historyInfo && historyInfo.settings[pi.id] && historyInfo.settings[pi.id].enabled).map((pi) => pi.id);
+  return on.length ? on : latestPis.slice(0, 1).map((pi) => pi.id);
+}
+
+function nameOf(id) {
+  const pi = latestPis.find((p) => p.id === id);
+  return pi ? pi.hostname : "a Pi no longer on the dashboard";
+}
+
+function dateWords(seconds, withTime) {
+  const options = withTime ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", year: "numeric" };
+  return new Date(seconds * 1000).toLocaleString([], options);
+}
+
+async function loadHistoryView() {
+  const ids = chosenIds().slice(0, HISTORY_COLORS);
+  const [from, to] = rangeTimes();
+  view.message = "";
+  if (!ids.length || !plan.plus) {
+    view.data = null;
+    renderHistoryView();
+    return;
+  }
+  try {
+    const query = `from=${from}&to=${to}`;
+    const [series, markers] = await Promise.all([
+      fetch(`/api/history/range?ids=${ids.join(",")}&${query}&readings=${encodeURIComponent(view.reading)}&points=600`, { cache: "no-store" }),
+      fetch(`/api/history/markers?${query}`, { cache: "no-store" }),
+    ]);
+    if (series.status === 401 || markers.status === 401) {
+      signedOut();
+      return;
+    }
+    const body = await series.json();
+    view.data = series.ok ? { ...body, from, to, ids } : null;
+    view.markers = markers.ok ? (await markers.json()).markers : [];
+    if (!series.ok) view.message = body.error || "The hub couldn't load History just now.";
+  } catch {
+    view.message = "Can't reach the hub. Try again in a moment.";
+  }
+  renderHistoryView();
+}
+
+function bigChart() {
+  const wrap = el("div", "history big-history");
+  const metric = VIEW_METRICS.find(([key]) => key === view.reading) || VIEW_METRICS[0];
+  const [key, label, unit, format] = metric;
+  const data = view.data;
+  const lines = data ? data.ids.map((id, i) => ({ id, i, s: data.series[id] })).filter((line) => line.s && line.s.times.length) : [];
+  const values = lines.flatMap((line) => line.s.values[key].filter((v) => v != null));
+  if (!data || values.length < 2) {
+    wrap.appendChild(el("p", "history-empty", data ? "No history for these Pis in this time yet. Turn History on with the switch at the top of a card; " +
+      "the first snapshots appear within a few minutes." : "Loading…"));
+    return wrap;
+  }
+  const single = lines.length === 1;
+  const lows = single ? lines[0].s.low[key].filter((v) => v != null) : [];
+  const highs = single ? lines[0].s.high[key].filter((v) => v != null) : [];
+  let low = Math.min(...values, ...lows);
+  let high = Math.max(...values, ...highs);
+  if (high - low < 1e-9) { high += 1; low -= 1; }
+  const W = 1000;
+  const H = 320;
+  const pad = 10;
+  const t0 = data.from;
+  const t1 = Math.max(data.to, t0 + 1);
+  const x = (t) => (t - t0) / (t1 - t0) * W;
+  const y = (v) => H - pad - (v - low) / (high - low) * (H - 2 * pad);
+  const plot = el("div", "history-plot");
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img",
+    "aria-label": `${label} from ${dateWords(t0)} to ${dateWords(t1)}, between ${format(low)} and ${format(high)} ${unit}` });
+  for (const v of [high, (high + low) / 2, low]) svg("line", { x1: 0, x2: W, y1: y(v), y2: y(v), class: "history-grid" }, root);
+
+  // Gaps (the Pi or History was off) break the line instead of drawing across them.
+  const runsOf = (s, list) => {
+    const runs = [];
+    let run = [];
+    s.times.forEach((t, i) => {
+      const v = list[i];
+      if (v == null || (i && t - s.times[i - 1] > 2.5 * s.step)) { if (run.length) runs.push(run); run = []; }
+      if (v != null) run.push([t, v]);
+    });
+    if (run.length) runs.push(run);
+    return runs;
+  };
+  if (single) {
+    const s = lines[0].s;
+    const lowRuns = runsOf(s, s.low[key]);
+    const highRuns = runsOf(s, s.high[key]);
+    lowRuns.forEach((lowRun, r) => {
+      const highRun = highRuns[r];
+      if (!highRun || highRun.length !== lowRun.length || lowRun.length < 2) return;
+      const top = highRun.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`);
+      const bottom = lowRun.slice().reverse().map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`);
+      svg("polygon", { points: [...top, ...bottom].join(" "), class: "history-band series-0" }, root);
+    });
+  }
+  for (const line of lines) {
+    for (const run of runsOf(line.s, line.s.values[key])) {
+      if (run.length > 1) svg("polyline", { points: run.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(" "), class: `history-line series-${line.i}` }, root);
+      else svg("circle", { cx: x(run[0][0]), cy: y(run[0][1]), r: 3, class: `history-point series-${line.i}` }, root);
+    }
+  }
+  for (const marker of view.markers) {
+    if (marker.t < t0 || marker.t > t1) continue;
+    if (marker.pi && !data.ids.includes(marker.pi)) continue;
+    const mark = svg("line", { x1: x(marker.t), x2: x(marker.t), y1: 0, y2: H, class: "history-marker" }, root);
+    const title = svg("title", {}, mark);
+    title.textContent = `${marker.text} (${marker.pi ? nameOf(marker.pi) : "all Pis"}, ${dateWords(marker.t, true)})`;
+  }
+  const cross = svg("line", { y1: 0, y2: H, class: "history-cross", visibility: "hidden" }, root);
+  plot.appendChild(root);
+  const axis = el("div", "history-y");
+  axis.append(el("span", "", `${format(high)} ${unit}`.trim()), el("span", "", `${format(low)} ${unit}`.trim()));
+  const tip = el("div", "history-tip");
+  tip.hidden = true;
+  plot.append(axis, tip);
+
+  root.addEventListener("pointermove", (event) => {
+    const box = root.getBoundingClientRect();
+    const t = t0 + (event.clientX - box.left) / box.width * (t1 - t0);
+    const parts = [];
+    let shownAt = null;
+    for (const line of lines) {
+      let best = -1;
+      line.s.times.forEach((time, i) => {
+        if (line.s.values[key][i] != null && (best < 0 || Math.abs(time - t) < Math.abs(line.s.times[best] - t))) best = i;
+      });
+      if (best < 0 || Math.abs(line.s.times[best] - t) > 3 * line.s.step) continue;
+      shownAt = shownAt || line.s.times[best];
+      parts.push(`${nameOf(line.id)} ${format(line.s.values[key][best])} ${unit}`.trim());
+    }
+    const near = view.markers.find((m) => Math.abs(m.t - t) < (t1 - t0) / 150);
+    if (near) parts.push(`◆ ${near.text}`);
+    if (!parts.length) { tip.hidden = true; cross.setAttribute("visibility", "hidden"); return; }
+    const px = x(shownAt || t);
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+    tip.textContent = `${dateWords(shownAt || t, true)}: ${parts.join(" · ")}`;
+    tip.style.left = `${Math.min(Math.max(px / W * 100, 20), 80)}%`;
+    tip.hidden = false;
+  });
+  root.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+  wrap.appendChild(plot);
+  const xAxis = el("div", "history-x");
+  const withTime = t1 - t0 <= 2 * 86400;
+  xAxis.append(el("span", "", dateWords(t0, withTime)), el("span", "", dateWords((t0 + t1) / 2, withTime)), el("span", "", dateWords(t1, withTime)));
+  wrap.appendChild(xAxis);
+  const legend = el("div", "legend");
+  for (const line of lines) {
+    const item = el("span", "legend-item");
+    item.append(el("span", `swatch series-${line.i}`), document.createTextNode(nameOf(line.id)));
+    legend.appendChild(item);
+  }
+  if (single) legend.appendChild(el("span", "legend-note", "Shaded: the lowest and highest readings"));
+  if (view.markers.length) legend.appendChild(el("span", "legend-note", "Dashed lines: markers"));
+  wrap.appendChild(legend);
+  return wrap;
+}
+
+function compareBox() {
+  const found = view.compare;
+  const box = el("div", "compare");
+  const marker = view.markers.find((m) => m.id === found.marker) || { text: "Marker", t: found.t };
+  box.appendChild(el("h3", "", `Before and after: ${marker.text}`));
+  box.appendChild(el("p", "help", `${nameOf(found.pi)}, ${found.days} day${found.days === 1 ? "" : "s"} on each side of ${dateWords(found.t, true)}. ` +
+    `${found.before_hours} hours of history before, ${found.after_hours} after.`));
+  if (found.before_hours < found.days * 12 || found.after_hours < found.days * 12) {
+    box.appendChild(el("p", "help", "Less than half of that time has history yet, so treat these numbers as early signs."));
+  }
+  const table = el("table", "compare-table");
+  const head = el("tr");
+  for (const words of ["", "Before", "After", "Change"]) head.appendChild(el("th", "", words));
+  table.appendChild(head);
+  for (const key of COMPARE_ROWS) {
+    const metric = VIEW_METRICS.find(([k]) => k === key);
+    const before = found.before[key];
+    const after = found.after[key];
+    if (before == null && after == null) continue;
+    const [, label, unit, format] = metric;
+    const row = el("tr");
+    row.appendChild(el("th", "", label));
+    row.appendChild(el("td", "", before == null ? "—" : `${format(before)} ${unit}`.trim()));
+    row.appendChild(el("td", "", after == null ? "—" : `${format(after)} ${unit}`.trim()));
+    let change = "—";
+    if (before != null && after != null) {
+      const diff = after - before;
+      const sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
+      change = `${sign}${format(Math.abs(diff))} ${unit}`.trim();
+      if (Math.abs(before) > 1e-9 && ["hashrate", "per_watt", "watts", "fan"].includes(key)) change += ` (${sign}${Math.abs(diff / before * 100).toFixed(1)}%)`;
+    }
+    row.appendChild(el("td", "", change));
+    table.appendChild(row);
+  }
+  box.appendChild(table);
+  box.appendChild(button("Close", "Close Before and after", () => { view.compare = null; renderHistoryView(); }));
+  return box;
+}
+
+async function showCompare(marker, days) {
+  const pi = marker.pi || chosenIds()[0];
+  if (!pi) return;
+  const response = await fetch(`/api/history/compare?id=${pi}&t=${marker.t}&days=${days}`, { cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    toast(data.error || "The hub couldn't work that out just now.");
+    return;
+  }
+  view.compare = { ...data, marker: marker.id, pi, t: marker.t };
+  renderHistoryView();
+}
+
+function markersBox() {
+  const box = el("div", "markers");
+  box.appendChild(el("h3", "", "Markers"));
+  box.appendChild(el("p", "help", "Note a change, like \"Ice cooler installed\". It shows as a dashed line, and Before and after compares the days on each side."));
+  const list = el("ul", "marker-list");
+  for (const marker of view.markers) {
+    const item = el("li");
+    item.appendChild(el("span", "", `${dateWords(marker.t, true)} · ${marker.pi ? nameOf(marker.pi) : "All Pis"} · ${marker.text}`));
+    const days = el("select");
+    days.setAttribute("aria-label", `Days to compare on each side of ${marker.text}`);
+    for (const n of [1, 3, 7, 14, 30]) {
+      const option = el("option", "", `${n} day${n === 1 ? "" : "s"} each side`);
+      option.value = String(n);
+      days.appendChild(option);
+    }
+    days.value = "7";
+    item.append(days, button("Before and after", `Compare before and after ${marker.text}`, () => void showCompare(marker, Number(days.value))),
+      button("Delete", `Delete the marker ${marker.text}`, async () => {
+        const { ok, data } = await sendHistory("POST", "/api/history/markers", { delete: marker.id });
+        if (!ok) toast(data.error || "Couldn't delete it just now.");
+        await loadHistoryView();
+      }));
+    list.appendChild(item);
+  }
+  if (!view.markers.length) list.appendChild(el("li", "help", "No markers in this time."));
+  box.appendChild(list);
+
+  const form = el("form", "marker-form");
+  const who = el("select");
+  who.setAttribute("aria-label", "Which Pi the marker is for");
+  const all = el("option", "", "All Pis");
+  all.value = "";
+  who.appendChild(all);
+  for (const pi of latestPis) {
+    const option = el("option", "", pi.hostname);
+    option.value = pi.id;
+    who.appendChild(option);
+  }
+  who.value = chosenIds().length === 1 ? chosenIds()[0] : "";
+  const when = el("input");
+  when.type = "datetime-local";
+  const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+  when.value = now.toISOString().slice(0, 16);
+  when.setAttribute("aria-label", "When it happened");
+  const text = el("input");
+  text.type = "text";
+  text.maxLength = 80;
+  text.placeholder = "What changed, e.g. Ice cooler installed";
+  text.setAttribute("aria-label", "What changed");
+  const add = el("button", "", "Add marker");
+  add.type = "submit";
+  form.append(who, when, text, add);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const t = Math.floor(new Date(when.value).getTime() / 1000);
+    const { ok, data } = await sendHistory("POST", "/api/history/markers", { pi: who.value || null, t, text: text.value });
+    if (!ok) {
+      toast(data.error || "Couldn't add the marker just now.");
+      return;
+    }
+    await loadHistoryView();
+  });
+  box.appendChild(form);
+  return box;
+}
+
+function exportBox() {
+  const box = el("div", "export");
+  box.appendChild(el("h3", "", "Export to Excel or Google Sheets"));
+  if (!plan.pro) {
+    box.appendChild(el("p", "help", "Download History as an Excel or CSV file: one tab per Pi, ready for your own charts. " +
+      "Exporting is part of MindfulFleet Pro."));
+    return box;
+  }
+  const kind = el("select");
+  kind.setAttribute("aria-label", "File type");
+  for (const [value, words] of [["xlsx", "Excel (.xlsx)"], ["csv", "CSV"]]) {
+    const option = el("option", "", words);
+    option.value = value;
+    kind.appendChild(option);
+  }
+  const every = el("select");
+  every.setAttribute("aria-label", "How much detail");
+  for (const [value, words] of [["3600", "Hourly averages"], ["86400", "Daily averages"], ["0", "Every snapshot"]]) {
+    const option = el("option", "", words);
+    option.value = value;
+    every.appendChild(option);
+  }
+  const lows = el("input");
+  lows.type = "checkbox";
+  const lowsLabel = el("label", "check");
+  lowsLabel.append(lows, document.createTextNode(" Include lows and highs"));
+  const link = el("a", "button-link", "Download");
+  const update = () => {
+    const [from, to] = rangeTimes();
+    link.href = `/api/history/export?ids=${chosenIds().join(",")}&from=${from}&to=${to}&format=${kind.value}&every=${every.value}&lows=${lows.checked ? 1 : 0}`;
+  };
+  for (const input of [kind, every, lows]) input.addEventListener("change", update);
+  update();
+  link.addEventListener("click", () => toast("Getting the file ready. A big export can take a minute."));
+  box.append(kind, every, lowsLabel, link);
+  box.appendChild(el("p", "help", "Uses the Pis and dates chosen above. Google Sheets: File → Import → Upload, then pick the file. " +
+    "One Excel tab holds about a million rows, so for long stretches pick hourly or daily averages."));
+  return box;
+}
+
+function importBox() {
+  const box = el("details", "rows import");
+  box.appendChild(el("summary", "", "Load a saved 24 hours"));
+  box.appendChild(el("p", "help", "If you saved the last 24 hours to a file before History was on, load it here. It fills in only where History has nothing."));
+  const file = el("input");
+  file.type = "file";
+  file.accept = ".json,application/json";
+  file.setAttribute("aria-label", "Saved file");
+  file.addEventListener("change", async () => {
+    const chosen = file.files && file.files[0];
+    if (!chosen) return;
+    if (chosen.size > 2 * 1024 * 1024) {
+      toast("That file is bigger than a saved 24 hours should be.");
+      return;
+    }
+    let saved;
+    try {
+      saved = JSON.parse(await chosen.text());
+    } catch {
+      toast("That isn't a saved MindfulFleet file.");
+      return;
+    }
+    const { ok, data } = await sendHistory("POST", "/api/history/import", saved);
+    if (!ok) {
+      toast(data.error || "Couldn't load it just now.");
+      return;
+    }
+    const added = Object.entries(data.added || {}).map(([name, count]) => `${name}: ${count}`).join(", ");
+    toast(added ? `Loaded snapshots. ${added}.` : "Nothing new to load: none of those Pis matched this dashboard.");
+    await loadHistoryView();
+  });
+  box.appendChild(file);
+  return box;
+}
+
+function renderHistoryView() {
+  const page = document.getElementById("history-view");
+  if (!page) return;
+  page.hidden = !view.open;
+  document.getElementById("open-history").setAttribute("aria-pressed", String(view.open));
+  if (!view.open) return;
+  const focused = page.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
+  page.replaceChildren();
+  const head = el("div", "history-view-head");
+  head.appendChild(el("h2", "", "History"));
+  head.appendChild(button("Close", "Close History", () => { view.open = false; renderHistoryView(); }));
+  page.appendChild(head);
+  if (!historyInfo) {
+    page.appendChild(el("p", "help", "This hub doesn't keep History."));
+    return;
+  }
+  if (!plan.plus) {
+    page.appendChild(el("p", "help", "History keeps each Pi's readings on your hub for up to 3 years: charts by day, week, month or year, " +
+      "several Pis on one chart, markers for changes like a new cooler, and Before and after. It's part of MindfulFleet Plus, coming soon."));
+    return;
+  }
+  const used = historyInfo.used_bytes ? `History uses ${bytes(historyInfo.used_bytes)} on the hub. ` : "";
+  page.appendChild(el("p", "help", `${used}Every snapshot is kept for ${historyInfo.full_days} days, then one per 3 hours for 3 years. Nothing leaves your hub.`));
+  if (historyInfo.paused) page.appendChild(el("p", "connection", historyInfo.paused));
+  if (view.message) page.appendChild(el("p", "connection", view.message));
+
+  const controls = el("div", "history-controls");
+  const pick = el("fieldset", "pi-pick");
+  pick.appendChild(el("legend", "", "Pis (up to 6 on one chart)"));
+  const ids = chosenIds();
+  latestPis.forEach((pi) => {
+    const label = el("label", "check");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = ids.includes(pi.id);
+    box.addEventListener("change", () => {
+      const next = new Set(chosenIds());
+      if (box.checked) next.add(pi.id); else next.delete(pi.id);
+      view.ids = latestPis.map((p) => p.id).filter((id) => next.has(id));
+      view.compare = null;
+      void loadHistoryView();
+    });
+    const index = ids.slice(0, HISTORY_COLORS).indexOf(pi.id);
+    label.append(box, index >= 0 ? el("span", `swatch series-${index}`) : el("span", "swatch"), document.createTextNode(` ${pi.hostname}`));
+    const setting = historyInfo.settings[pi.id];
+    label.appendChild(el("small", "", setting && setting.enabled ? ` every ${everyWords(setting.every)}` : " (History off)"));
+    pick.appendChild(label);
+  });
+  if (ids.length > HISTORY_COLORS) pick.appendChild(el("p", "help", "Showing the first 6."));
+  controls.appendChild(pick);
+
+  const choose = el("div", "history-choose");
+  const reading = el("select");
+  reading.setAttribute("aria-label", "Reading to chart");
+  for (const [key, label] of VIEW_METRICS) {
+    const option = el("option", "", label);
+    option.value = key;
+    reading.appendChild(option);
+  }
+  reading.value = view.reading;
+  reading.addEventListener("change", () => { view.reading = reading.value; void loadHistoryView(); });
+  const range = el("select");
+  range.setAttribute("aria-label", "Time to show");
+  for (const [value, label] of RANGES) {
+    const option = el("option", "", label);
+    option.value = value;
+    range.appendChild(option);
+  }
+  range.value = view.range;
+  range.addEventListener("change", () => { view.range = range.value; void loadHistoryView(); });
+  choose.append(reading, range);
+  if (view.range === "custom") {
+    for (const [key, words] of [["from", "From"], ["to", "To"]]) {
+      const date = el("input");
+      date.type = "date";
+      date.value = view[key];
+      date.setAttribute("aria-label", words);
+      date.addEventListener("change", () => { view[key] = date.value; void loadHistoryView(); });
+      const label = el("label", "pick");
+      label.append(document.createTextNode(`${words} `), date);
+      choose.appendChild(label);
+    }
+  }
+  controls.appendChild(choose);
+
+  const everyone = el("div", "history-all");
+  everyone.appendChild(el("span", "", "All Pis:"));
+  const allSettings = Object.values(historyInfo.settings);
+  const allEvery = allSettings.length ? allSettings[0].every : 60;
+  everyone.appendChild(intervalPicker("all", allEvery, "How often to save every Pi's snapshot",
+    (every) => saveHistorySetting(latestPis.map((pi) => pi.id), { every })));
+  everyone.append(
+    button("Turn on for all", "Turn History on for every Pi", () => saveHistorySetting(latestPis.map((pi) => pi.id), { enabled: true })),
+    button("Turn off for all", "Turn History off for every Pi; what's saved is kept", () => saveHistorySetting(latestPis.map((pi) => pi.id), { enabled: false })));
+  controls.appendChild(everyone);
+  page.appendChild(controls);
+
+  page.appendChild(bigChart());
+  if (view.compare) page.appendChild(compareBox());
+  const lower = el("div", "history-lower");
+  lower.append(markersBox(), exportBox());
+  page.appendChild(lower);
+  page.appendChild(importBox());
+  if (focused) {
+    const again = [...page.querySelectorAll("[aria-label]")].find((node) => node.getAttribute("aria-label") === focused);
+    if (again) again.focus();
+  }
+}
+
+function setUpHistory() {
+  const open = document.getElementById("open-history");
+  if (!open) return;
+  open.addEventListener("click", () => {
+    view.open = !view.open;
+    renderHistoryView();
+    if (view.open) {
+      void loadHistoryView();
+      document.getElementById("history-view").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+}

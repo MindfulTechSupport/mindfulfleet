@@ -60,6 +60,7 @@ To control updates on a computer:
 | `sudo mindful-fleet password` | On the hub: chooses or changes the dashboard password. `password off` turns it off |
 | `sudo mindful-fleet tidy` | Frees up space: shows what it would clear, asks first, then shows how much it freed. See Pi tools |
 | `sudo mindful-fleet wifi-watchdog on` | Reconnects Wi-Fi by itself when this computer loses its router. Also `off` and `status`. See Pi tools |
+| `sudo mindful-fleet plan owner` | On the hub: turns on the paid features (History, and exporting it) for the owner's own fleet until MindfulFleet Plus can be bought. `plan free` turns them off; `plan status` shows the plan |
 
 Computers installed with 0.2.0 or earlier don't check for updates. Run this once on each one to add it:
 
@@ -72,6 +73,20 @@ Before running any script from the internet, you're welcome to read it first: it
 ## Colors
 
 Settings → **Colors** changes the dashboard's palette, and **Light or dark** picks light, dark, or whatever your device uses. Lavender, Ocean and Clear (extra contrast, color-blind friendly) are free. Nine more palettes come with MindfulFleet Plus; until Plus can be bought, you can preview them for one visit. Each browser remembers its own choice.
+
+## History (MindfulFleet Plus)
+
+Every card keeps a free 24-hour chart. History keeps each Pi's readings for up to 3 years:
+
+- **History on / off** at the top of each card, and how often to save a snapshot: every 15 seconds, 30 seconds, 1, 3, 5, 15 or 30 minutes, 1 or 6 hours, 1 day, or Custom (15 seconds to 7 days). 15 seconds is the shortest because that's how often a Pi reports.
+- Each snapshot keeps every reading's **average, low and high** over its interval, so a short heat spike inside a 15-minute snapshot still shows.
+- Every snapshot is kept for **90 days**, then each 3 hours is folded into one snapshot that's kept for **3 years**.
+- Settings → **History** shows a chart for the last day, week, month, 90 days, year or 3 years, or your own dates; up to 6 Pis on one chart; and gaps where a Pi or its History was off.
+- **Markers** note a change, such as "Ice cooler installed", as a dashed line on the chart. **Before and after** compares the days on each side: temperature, hashrate, hashes per watt, power, fan and time slowed down.
+- **Export** (MindfulFleet Pro): download an Excel (.xlsx) or CSV file, one tab per Pi, as every snapshot or hourly or daily averages. Google Sheets opens it with File → Import → Upload. One Excel tab holds about a million rows, so long stretches need hourly or daily averages.
+- History lives in `/var/lib/mindful-fleet/history.db` on the hub, and nothing leaves your network. It's written once a minute in one batch to spare SD cards, and it pauses by itself if the hub's disk gets down to 1 GB free. Measured on a demo: about 0.9 MB per Pi per day at 15 seconds, less at longer intervals.
+
+Until MindfulFleet Plus can be bought, the owner turns History on with `sudo mindful-fleet plan owner` on the hub.
 
 ## Pi tools
 
@@ -154,6 +169,7 @@ CPU load never changes the color, because some computers, such as miners, are me
 - Reports need the fleet token. Both programs run as an unprivileged user under a locked-down service.
 - The hub contacts GitHub every 6 hours to see whether a newer version exists. It sends nothing about your fleet. Start it with `--no-update-check` to turn this off.
 - The reporter sends the name of the busiest program on each computer to the hub.
+- History stays on the hub. Only someone signed in to the dashboard can see it, change it or download it.
 - The dashboard password keeps people on your network out of the dashboard. Its sign-in cookie can't be read by scripts and isn't sent by other websites, and the hub refuses changes sent from other sites.
 - Traffic is plain HTTP, so **it isn't encrypted**. Anyone on your network could read the numbers, the token and, while you sign in, the password. Use it on a home network you trust, and don't forward its port to the internet. Encrypted links are planned.
 

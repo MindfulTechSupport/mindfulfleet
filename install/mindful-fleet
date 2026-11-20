@@ -11,6 +11,7 @@
 #   mindful-fleet password off   turn the dashboard password off (on the hub)
 #   mindful-fleet tidy           free up space (asks first); 'tidy undo' removes the log cap it can add
 #   mindful-fleet wifi-watchdog on|off|status   reconnect Wi-Fi by itself when this Pi loses the router
+#   mindful-fleet plan owner|free|status       turn the paid features (History) on for the owner's own hub
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindfulfleet"
@@ -90,6 +91,30 @@ case "${1:-status}" in
     # The hub's own code writes the file and hands it to the hub's account before putting it in place.
     MINDFUL_FLEET_STATE="$STATE" python3 /opt/mindful-fleet/hub/mindful_fleet_hub.py --set-password
     ;;
+  plan)
+    need_root
+    [ -f /etc/mindful-fleet/hub.env ] || { echo "This computer isn't the hub. Run this on the computer that shows the dashboard." >&2; exit 1; }
+    FILE=/etc/mindful-fleet/plan
+    case "${2:-status}" in
+      owner)
+        printf 'owner\n' > "$FILE"
+        chown root:mindful-fleet "$FILE"
+        chmod 640 "$FILE"
+        echo "Owner plan is on for this hub: History, and exporting it, are turned on."
+        echo "Open the dashboard and use the History switch at the top of each card."
+        ;;
+      free)
+        printf 'free\n' > "$FILE"
+        chown root:mindful-fleet "$FILE"
+        chmod 640 "$FILE"
+        echo "Back to the free plan. History stops saving new snapshots; what it already saved is kept."
+        ;;
+      status)
+        echo "Plan: $(tr -d '[:space:]' 2>/dev/null < "$FILE" || echo free)"
+        ;;
+      *) echo "Usage: sudo mindful-fleet plan owner | free | status" >&2; exit 1 ;;
+    esac
+    ;;
   tidy)
     need_root
     TOOLS=/opt/mindful-fleet/tools/mindful_fleet_tools.py
@@ -157,7 +182,7 @@ EOF
     curl -fsSL --proto "=https" --tlsv1.2 "https://raw.githubusercontent.com/$REPO/$CHANNEL/install.sh" | MINDFUL_FLEET_CHANNEL="$CHANNEL" bash -s -- update
     ;;
   *)
-    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig | password [off] | tidy [undo] | wifi-watchdog on|off|status" >&2
+    echo "Usage: mindful-fleet status | update | hold | skip | resume | every hourly|6h|daily|weekly | xmrig | password [off] | tidy [undo] | wifi-watchdog on|off|status | plan owner|free|status" >&2
     exit 1
     ;;
 esac

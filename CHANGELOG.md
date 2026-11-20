@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.15 (2026-11-20)
+
+- History (MindfulFleet Plus): a History on/off switch at the top of each card, with how often to save a snapshot (15 seconds to 1 day, or Custom). Each snapshot keeps the average, low and high of every reading. Every snapshot is kept for 90 days, then one per 3 hours for 3 years, on the hub only.
+- Settings → History: charts for a day up to 3 years, up to 6 Pis on one chart, gaps where History was off, markers for changes like a new cooler, and Before and after for the days on each side of a marker. Turn on or off for all Pis at once.
+- Export (MindfulFleet Pro): download History as Excel (.xlsx) or CSV, one tab per Pi, as every snapshot or hourly or daily averages. Google Sheets opens the same file.
+- Load a saved 24 hours: a file saved from the dashboard before History was on fills in the gap.
+- `sudo mindful-fleet plan owner` on the hub turns on the paid features for the owner's own fleet until MindfulFleet Plus can be bought; `plan free` turns them off. It also unlocks the Plus color palettes.
+- History is written once a minute in one batch and pauses if the hub's disk gets down to 1 GB free.
+
 ## 0.2.14 (2026-11-16)
 
 - Gauges and Wide looks: Per watt now has its ring (and its bar in Wide), filled against a 120 H/s per watt scale, like Power use against 12 W. How many cores are mining still shows under Mining in the readings.

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """MindfulFleet hub: receives reports and serves the dashboard. Standard library only."""
 import argparse
+import csv
+import datetime
 import getpass
 import hmac
+import io
 import json
 import math
 import os
 import random
 import re
 import signal
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -23,9 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import auth  # noqa: E402
 import discover  # noqa: E402
 import health  # noqa: E402
+import history_store  # noqa: E402
+import plan as plans  # noqa: E402
+import xlsx  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.14"
+VERSION = "0.2.15"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -35,6 +42,11 @@ UPDATE_CHECK_SECONDS = 6 * 3600
 RELEASE_VERSION_URL = "https://raw.githubusercontent.com/MindfulTechSupport/mindfulfleet/release/VERSION"
 MAX_LAYOUT_BYTES = 16 * 1024
 MAX_AUTH_BYTES = 1024
+MAX_HISTORY_BYTES = 4 * 1024
+MAX_IMPORT_BYTES = 2 * 1024 * 1024  # A saved 24 hours for a big fleet is a few hundred KB.
+EXPORT_EVERY = (0, 3600, 86400)  # Each snapshot, hourly averages, daily averages.
+NEEDS_PLUS = "History is part of MindfulFleet Plus."
+NEEDS_PRO = "Exporting History is part of MindfulFleet Pro."
 HISTORY_READINGS = ("temp", "hashrate", "watts", "cpu", "fan", "memory", "clock", "sensor_watts")
 _VERSION_RE = re.compile(r"^\d+(\.\d+){1,3}$")
 DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
@@ -257,6 +269,11 @@ class Fleet:
             for pi in self._pis.values():
                 pi["last_seen"] -= seconds
 
+    def names(self):
+        """{Pi id: hostname} for every Pi on the dashboard."""
+        with self._lock:
+            return {pi_id: p["report"]["hostname"] for pi_id, p in self._pis.items()}
+
     def known_addresses(self):
         """{address: name} for every computer that reports, for Find my Pis."""
         with self._lock:
@@ -348,9 +365,31 @@ def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
             return
 
 
-def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discovery=None):
+def _whole(value, low, high):
+    """A whole number from a query string or JSON, inside the range, or None."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(value, bool) or not math.isfinite(number) or not low <= number <= high:
+        return None
+    return int(number)
+
+
+def _ids(text):
+    ids = [part for part in str(text or "").split(",") if part][:MAX_PIS]
+    return ids if ids and all(_ID_RE.match(part) for part in ids) else None
+
+
+def _local_text(seconds):
+    return datetime.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discovery=None, history=None, plan=None):
     """passwords is an auth.Auth. Without one, or before a password is set, the dashboard is open, as before 0.3.0.
-    discovery is a discover.Discovery for the Find my Pis button."""
+    discovery is a discover.Discovery for the Find my Pis button. history is a history_store.HistoryStore and
+    plan a plan.Plan: History needs Plus, and exporting it needs Pro."""
+    plan = plan or plans.Plan(fixed="free")
     class Handler(BaseHTTPRequestHandler):
         server_version = "MindfulFleet"
         sys_version = ""
@@ -479,6 +518,159 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                 return self._json(503, results)
             self._json(200, results)
 
+        def _history_status(self):
+            if history is None:
+                return None
+            return {"settings": history.settings(), "used_bytes": history.used_bytes(), "paused": history.paused,
+                    "full_days": history_store.FULL_DAYS, "rolled_days": history_store.ROLLUP_DAYS,
+                    "intervals": list(history_store.INTERVALS), "min_interval": history_store.MIN_INTERVAL,
+                    "max_interval": history_store.MAX_INTERVAL}
+
+        def _history_refusal(self, needs_pro=False):
+            """Sends the refusal and returns True when History can't be used right now."""
+            if history is None:
+                self._json(404, {"error": "History isn't available on this hub."})
+                return True
+            current = plan.current()
+            if not current["plus"] or (needs_pro and not current["pro"]):
+                self._json(403, {"error": NEEDS_PRO if needs_pro and current["plus"] else NEEDS_PLUS, "plan": current})
+                return True
+            return False
+
+        def _history_get(self, path, query):
+            def one(name):
+                return (query.get(name) or [""])[0]
+            now = time.time()
+            start = _whole(one("from"), 0, now + 86400)
+            end = _whole(one("to"), 0, now + 86400)
+            if path == "/api/history/range":
+                ids = _ids(one("ids"))
+                names = [name for name in one("readings").split(",") if name in history_store.READINGS]
+                points = _whole(one("points") or 600, 10, history_store.MAX_POINTS)
+                if not ids or not names or start is None or end is None or end <= start or points is None:
+                    return self._json(400, {"error": "bad request"})
+                if self._history_refusal():
+                    return
+                return self._json(200, {"series": history.series(ids, start, end, names, points)})
+            if path == "/api/history/markers":
+                if start is None or end is None or end <= start:
+                    return self._json(400, {"error": "bad request"})
+                if self._history_refusal():
+                    return
+                return self._json(200, {"markers": history.markers(start, end)})
+            if path == "/api/history/compare":
+                pi_id = one("id")
+                when = _whole(one("t"), 0, now + 86400)
+                days = _whole(one("days"), 1, 90)
+                if not _ID_RE.match(pi_id) or when is None or days is None:
+                    return self._json(400, {"error": "bad request"})
+                if self._history_refusal():
+                    return
+                found = history.compare(pi_id, when, days)
+                return self._json(200, found) if found else self._json(404, {"error": "No history for that Pi yet."})
+            if path == "/api/history/export":
+                ids = _ids(one("ids"))
+                every = _whole(one("every") or 0, 0, 86400)
+                kind = one("format")
+                if not ids or start is None or end is None or end <= start or every not in EXPORT_EVERY \
+                        or kind not in ("csv", "xlsx"):
+                    return self._json(400, {"error": "bad request"})
+                if self._history_refusal(needs_pro=True):
+                    return
+                if every:
+                    start = history_store.bucket_start(start, every)  # Hours start on the hour, days at midnight.
+                return self._export(ids, start, end, every, one("lows") == "1", kind)
+            self._json(404, {"error": "not found"})
+
+        def _export(self, ids, start, end, every, lows, kind):
+            try:
+                heading, kept, sheets = history.export_plan(ids, start, end, every, lows)
+            except ValueError as error:
+                return self._json(413, {"error": str(error)})
+            if not sheets:
+                return self._json(404, {"error": "No history for those Pis in that time."})
+            rows = [(name, history.export_rows(n, start, end, kept, every, lows)) for name, n in sheets]
+            stamp = datetime.date.today().isoformat()
+            with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as out:
+                if kind == "csv":
+                    text = io.TextIOWrapper(out, encoding="utf-8-sig", newline="")
+                    writer = csv.writer(text)
+                    writer.writerow(["Pi", *heading])
+                    for name, lines in rows:
+                        for row in lines:
+                            writer.writerow([name, _local_text(row[0]), *("" if v is None else v for v in row[1:])])
+                    text.flush()
+                    text.detach()
+                    content_type = "text/csv; charset=utf-8"
+                else:
+                    xlsx.write(out, heading, rows, history_store.utc_offset)
+                    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                size = out.tell()
+                out.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Disposition", f'attachment; filename="MindfulFleet history {stamp}.{kind}"')
+                self.send_header("Cache-Control", "no-store")
+                for name, value in SECURITY_HEADERS.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                if self.command != "HEAD":
+                    while chunk := out.read(64 * 1024):
+                        self.wfile.write(chunk)
+
+        def _history_put(self):
+            body = self._read_json(MAX_HISTORY_BYTES)
+            if body is None:
+                return
+            if self._history_refusal():
+                return
+            ids = body.get("ids") if isinstance(body, dict) else None
+            if not isinstance(ids, list) or not ids or len(ids) > MAX_PIS or not all(isinstance(i, str) and _ID_RE.match(i) for i in ids):
+                return self._json(400, {"error": "bad request"})
+            enabled = body.get("enabled")
+            every = body.get("every")
+            if enabled is not None and not isinstance(enabled, bool):
+                return self._json(400, {"error": "bad request"})
+            names = fleet.names()
+            try:
+                for pi_id in ids:
+                    if pi_id not in names:
+                        return self._json(404, {"error": "unknown computer"})
+                    history.set(pi_id, names[pi_id], enabled=enabled, every=every)
+            except ValueError as error:
+                return self._json(400, {"error": str(error)})
+            self._json(200, {"settings": history.settings()})
+
+        def _history_post(self, path):
+            limit = MAX_IMPORT_BYTES if path == "/api/history/import" else MAX_HISTORY_BYTES
+            body = self._read_json(limit)
+            if body is None:
+                return
+            if self._history_refusal():
+                return
+            if not isinstance(body, dict):
+                return self._json(400, {"error": "bad request"})
+            names = fleet.names()
+            try:
+                if path == "/api/history/import":
+                    known = {name: pi_id for pi_id, name in names.items()}
+                    return self._json(200, {"added": history.import_saved(body, known)})
+                if "delete" in body:
+                    marker = _whole(body.get("delete"), 1, 2**62)
+                    if marker is None:
+                        return self._json(400, {"error": "bad request"})
+                    return self._json(200, {"deleted": history.delete_marker(marker)})
+                pi_id = body.get("pi") or None
+                if pi_id is not None and (not isinstance(pi_id, str) or pi_id not in names):
+                    return self._json(404, {"error": "unknown computer"})
+                when = _whole(body.get("t"), 0, time.time() + 366 * 86400)
+                if when is None:
+                    return self._json(400, {"error": "The marker needs a time."})
+                return self._json(200, history.add_marker(pi_id, names.get(pi_id), when, body.get("text")))
+            except ValueError as error:
+                return self._json(400, {"error": str(error)})
+
         def do_GET(self):
             path = self.path.split("?", 1)[0]
             if path == "/api/auth":
@@ -487,7 +679,10 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
             if path.startswith("/api/") and not self._signed_in():
                 return self._refuse_signed_out()
             if path == "/api/fleet":
-                self._json(200, {**fleet.snapshot(), "password_set": bool(passwords and passwords.has_password())})
+                self._json(200, {**fleet.snapshot(), "password_set": bool(passwords and passwords.has_password()),
+                                 "plan": plan.current(), "history": self._history_status()})
+            elif path.startswith("/api/history/"):
+                self._history_get(path, urllib.parse.parse_qs(self.path.partition("?")[2]))
             elif path == "/api/history":
                 query = urllib.parse.parse_qs(self.path.partition("?")[2])
                 pi_id = (query.get("id") or [""])[0]
@@ -510,6 +705,11 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
 
         def do_PUT(self):
             # Browsers can't send this from another site without asking first, and the hub never says yes.
+            if self.path == "/api/history/settings":
+                if not self._signed_in():
+                    self.close_connection = True
+                    return self._refuse_signed_out()
+                return self._history_put()
             if self.path != "/api/layout":
                 self.close_connection = True
                 return self._json(404, {"error": "not found"})
@@ -535,6 +735,11 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                 return self._auth_post(self.path)
             if discovery is not None and self.path == "/api/discover":
                 return self._discover()
+            if self.path in ("/api/history/markers", "/api/history/import"):
+                if not self._signed_in():
+                    self.close_connection = True
+                    return self._refuse_signed_out()
+                return self._history_post(self.path)
             if self.path != "/api/report":
                 self.close_connection = True
                 return self._json(404, {"error": "not found"})
@@ -556,6 +761,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                 return self._json(400, {"error": str(error)})
             if not fleet.record(report):
                 return self._json(507, {"error": "fleet is full"})
+            if history is not None and plan.current()["plus"]:
+                history.add(report)
             self._json(200, {"ok": True})
 
     return Handler
@@ -608,7 +815,27 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
     }
 
 
-def run_demo(fleet, stop):
+def seed_demo_history(fleet, history, now):
+    """A pretend week of History on two Pis, with an ice cooler fitted on one of them 3 days ago."""
+    names = {name: pi_id for pi_id, name in fleet.names().items()}
+    cooler = now - 3 * 86400
+    for name in ("garage-pi", "attic-pi"):
+        history.set(names[name], name, enabled=True, every=300)
+    for name, temp in (("garage-pi", 52), ("attic-pi", 70)):
+        report = clean_report(demo_report(name, temp))
+        for step in range(7 * 288, 0, -1):
+            when = now - step * 300
+            swing = 4 * math.sin(when / 86400 * 2 * math.pi)  # Warmer in the afternoon, cooler at night.
+            cooled = -9 if name == "attic-pi" and when >= cooler else 0
+            history.add({**report, "temp_c": temp + swing + cooled + random.uniform(-0.5, 0.5),
+                         "hashrate": (1080 if cooled else 930) + random.uniform(-20, 20)}, when)
+            history.add({**report, "temp_c": temp + swing + cooled + random.uniform(-0.5, 0.5),
+                         "hashrate": (1080 if cooled else 930) + random.uniform(-20, 20)}, when + 150)
+    history.tick(now + 3600)
+    history.add_marker(names["attic-pi"], "attic-pi", cooler, "Ice cooler installed")
+
+
+def run_demo(fleet, stop, history=None):
     """Pretend fleet that shows off each state a card can be in."""
     busy = [100.0, 100.0, 100.0, 100.0]
     cast = (
@@ -629,6 +856,8 @@ def run_demo(fleet, stop):
         swing = 4 * math.sin(minutes_ago / 180)  # Warmer in the afternoon, cooler at night.
         for name, temp, kwargs in cast:
             fleet.seed_history(clean_report(demo_report(name, temp + swing, **kwargs)), now - minutes_ago * 60)
+    if history is not None:
+        seed_demo_history(fleet, history, now)
     while not stop.wait(5):
         for name, temp, kwargs in cast:
             fleet.record(demo_report(name, temp, **kwargs))
@@ -683,7 +912,20 @@ def main(argv=None):
     fleet = Fleet(args.state)
     stop = threading.Event()
     finder = (lambda known: discover.demo_results()) if args.demo else discover.find_pis
-    handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder))
+    if args.demo:
+        history, plan = history_store.HistoryStore(None), plans.Plan(fixed="demo")
+    else:
+        where = Path(args.state).with_name("history.db") if args.state else None
+        plan = plans.Plan()
+        try:
+            history = history_store.HistoryStore(where)
+        except (sqlite3.Error, OSError) as error:
+            # The dashboard matters more than History: start without it and say why.
+            print(f"History is off: couldn't open {where} ({error}). Move that file aside and restart the hub "
+                  "to start History afresh.", file=sys.stderr, flush=True)
+            history = None
+    handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder),
+                           history=history, plan=plan)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     server.daemon_threads = True
 
@@ -696,7 +938,7 @@ def main(argv=None):
 
     if args.demo:
         fleet.latest_version = VERSION
-        threading.Thread(target=run_demo, args=(fleet, stop), daemon=True).start()
+        threading.Thread(target=run_demo, args=(fleet, stop, history), daemon=True).start()
     else:
         def keep_saving():
             while not stop.wait(SAVE_EVERY_SECONDS):
@@ -708,6 +950,15 @@ def main(argv=None):
         if not args.no_update_check:
             threading.Thread(target=check_latest_version, args=(fleet, stop), daemon=True).start()
 
+    def keep_history():
+        while not stop.wait(history_store.FLUSH_SECONDS):
+            try:
+                history.tick()
+            except (OSError, sqlite3.Error) as error:
+                print(f"Couldn't save History: {error}", file=sys.stderr, flush=True)
+    if history is not None:
+        threading.Thread(target=keep_history, daemon=True).start()
+
     print(f"MindfulFleet {VERSION} dashboard: http://{args.host}:{args.port}/", flush=True)
     if passwords and not passwords.has_password():
         print("No dashboard password yet. Set one with: sudo mindful-fleet password", flush=True)
@@ -716,6 +967,11 @@ def main(argv=None):
         fleet.save()
     except OSError as error:
         print(f"Couldn't save state: {error}", file=sys.stderr)
+    try:
+        if history is not None:
+            history.flush_now()
+    except (OSError, sqlite3.Error) as error:
+        print(f"Couldn't save History: {error}", file=sys.stderr)
     return 0
 
 

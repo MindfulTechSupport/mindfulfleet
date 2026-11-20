@@ -9,5 +9,8 @@ select = ["E", "W", "F", "B", "S", "PLE"]
 [lint.per-file-ignores]
 # The hub's random numbers only make up demo data (--demo); tokens come from the installer's openssl.
 "hub/mindful_fleet_hub.py" = ["S311"]
+# History's SQL statements are built once at import from its own fixed reading names; every value from a
+# browser or a Pi is passed as a ? parameter, never joined into a statement (tests check hostile names).
+"hub/history_store.py" = ["S608"]
 # Tests use assert, temporary files, fake tokens and local test servers on purpose.
 "tests/*" = ["S101", "S105", "S106", "S107", "S108", "S310", "S603", "S607"]

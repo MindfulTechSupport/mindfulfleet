@@ -258,3 +258,48 @@ button[aria-pressed="true"] { background: var(--neutral); color: var(--card); bo
 .find-pis-list .soft { color: var(--soft); font-size: .9em; }
 code { font-family: ui-monospace, monospace; }
 [hidden] { display: none !important; }
+
+/* History (Plus): the switch on each card, and the History page. */
+.history-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; font-size: .85em; }
+.wide-body > .history-switch { padding: 0 0 6px; }
+.history-switch button, .history-switch select, .every input, .every select { min-height: 2em; padding: 2px 8px; }
+.history-switch .locked { color: var(--soft); font-weight: 600; }
+.every { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.every input { width: 5em; font: inherit; color: var(--ink); background: var(--card); border: 1.5px solid var(--track); border-radius: 8px; }
+.every-label { color: var(--soft); }
+.history-view { background: var(--card); border: 1.5px solid var(--track); border-radius: 16px; padding: 16px 18px; margin: 0 0 18px; display: flex; flex-direction: column; gap: 12px; }
+.history-view[hidden] { display: none; }
+.history-view h2, .history-view h3 { margin: 0; }
+.history-view-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.history-controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-start; }
+.pi-pick { border: 1.5px solid var(--track); border-radius: 10px; padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: 60ch; }
+.pi-pick small { color: var(--soft); }
+.check { display: inline-flex; align-items: center; gap: 4px; }
+.history-choose, .history-all { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.history-choose input[type="date"], .marker-form input { font: inherit; color: var(--ink); background: var(--card); border: 1.5px solid var(--track); border-radius: 10px; padding: 5px 8px; }
+.big-history .history-plot svg { height: 20em; }
+.history-line.series-0, .history-point.series-0, .swatch.series-0 { --series: #0072b2; }
+.history-line.series-1, .history-point.series-1, .swatch.series-1 { --series: #e69f00; }
+.history-line.series-2, .history-point.series-2, .swatch.series-2 { --series: #009e73; }
+.history-line.series-3, .history-point.series-3, .swatch.series-3 { --series: #cc79a7; }
+.history-line.series-4, .history-point.series-4, .swatch.series-4 { --series: #56b4e9; }
+.history-line.series-5, .history-point.series-5, .swatch.series-5 { --series: #d55e00; }
+.big-history .history-line { stroke: var(--series, var(--neutral)); }
+.history-point { fill: var(--series, var(--neutral)); }
+.history-band { fill: #0072b2; opacity: .16; stroke: none; }
+.history-marker { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85em; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.legend-note { color: var(--soft); }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--series, var(--track)); }
+.history-lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.markers, .export, .compare { display: flex; flex-direction: column; gap: 8px; }
+.marker-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.marker-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.marker-form { display: flex; flex-wrap: wrap; gap: 6px; }
+.marker-form input[type="text"] { flex: 1 1 14em; }
+.compare { border: 1.5px solid var(--track); border-radius: 12px; padding: 12px; align-items: flex-start; }
+.compare-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.compare-table th, .compare-table td { text-align: left; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--track); }
+.button-link { display: inline-flex; align-items: center; font-weight: 700; color: var(--card); background: var(--neutral); border-radius: 10px; padding: 6px 14px; min-height: 36px; text-decoration: none; width: fit-content; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--card); padding: 10px 16px; border-radius: 10px; max-width: min(90vw, 60ch); z-index: 20; font-weight: 600; }
