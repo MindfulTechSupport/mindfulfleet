@@ -30,9 +30,10 @@ class Plan:
         if self._fixed:
             return self._fixed
         try:
-            stamp = self._path.stat().st_mtime_ns
+            info = self._path.stat()
         except OSError:
             return "free"
+        stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
         if stamp != self._seen[0]:
             try:
                 word = self._path.read_text(encoding="utf-8", errors="replace")[:40].strip().lower()

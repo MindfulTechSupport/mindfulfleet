@@ -97,20 +97,25 @@ case "${1:-status}" in
     FILE=/etc/mindful-fleet/plan
     case "${2:-status}" in
       owner)
-        printf 'owner\n' > "$FILE"
-        chown root:mindful-fleet "$FILE"
-        chmod 640 "$FILE"
+        TMP="$(mktemp /etc/mindful-fleet/.plan.XXXXXX)"
+        printf 'owner\n' > "$TMP"
+        chown root:mindful-fleet "$TMP"
+        chmod 640 "$TMP"
+        mv -f "$TMP" "$FILE"
         echo "Owner plan is on for this hub: History, and exporting it, are turned on."
         echo "Open the dashboard and use the History switch at the top of each card."
         ;;
       free)
-        printf 'free\n' > "$FILE"
-        chown root:mindful-fleet "$FILE"
-        chmod 640 "$FILE"
+        TMP="$(mktemp /etc/mindful-fleet/.plan.XXXXXX)"
+        printf 'free\n' > "$TMP"
+        chown root:mindful-fleet "$TMP"
+        chmod 640 "$TMP"
+        mv -f "$TMP" "$FILE"
         echo "Back to the free plan. History stops saving new snapshots; what it already saved is kept."
         ;;
       status)
-        echo "Plan: $(tr -d '[:space:]' 2>/dev/null < "$FILE" || echo free)"
+        WORD="$(tr -d '[:space:]' 2>/dev/null < "$FILE" | tr '[:upper:]' '[:lower:]' || true)"
+        case "$WORD" in plus|pro|owner) echo "Plan: $WORD" ;; *) echo "Plan: free" ;; esac
         ;;
       *) echo "Usage: sudo mindful-fleet plan owner | free | status" >&2; exit 1 ;;
     esac

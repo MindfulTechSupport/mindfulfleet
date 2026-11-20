@@ -369,7 +369,7 @@ def _whole(value, low, high):
     """A whole number from a query string or JSON, inside the range, or None."""
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if isinstance(value, bool) or not math.isfinite(number) or not low <= number <= high:
         return None
@@ -390,6 +390,7 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
     discovery is a discover.Discovery for the Find my Pis button. history is a history_store.HistoryStore and
     plan a plan.Plan: History needs Plus, and exporting it needs Pro."""
     plan = plan or plans.Plan(fixed="free")
+    exporting = threading.Semaphore(1)  # One export at a time: each can take a minute and a lot of space on a Pi.
     class Handler(BaseHTTPRequestHandler):
         server_version = "MindfulFleet"
         sys_version = ""
@@ -577,21 +578,38 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                     return self._json(400, {"error": "bad request"})
                 if self._history_refusal(needs_pro=True):
                     return
+                if self.command == "HEAD":
+                    return self._json(405, {"error": "Use GET to download."})
+                if passwords is not None and not passwords.has_password():
+                    # Without a password, any web page the owner visits could start big exports.
+                    return self._json(403, {"error": "Give the dashboard a password first. On the hub, run: "
+                                                     "sudo mindful-fleet password"})
                 if every:
                     start = history_store.bucket_start(start, every)  # Hours start on the hour, days at midnight.
                 return self._export(ids, start, end, every, one("lows") == "1", kind)
             self._json(404, {"error": "not found"})
 
         def _export(self, ids, start, end, every, lows, kind):
+            if not exporting.acquire(blocking=False):
+                return self._json(429, {"error": "Another export is being made. Try again in a minute."})
+            try:
+                return self._export_now(ids, start, end, every, lows, kind)
+            finally:
+                exporting.release()
+
+        def _export_now(self, ids, start, end, every, lows, kind):
             try:
                 heading, kept, sheets = history.export_plan(ids, start, end, every, lows)
             except ValueError as error:
                 return self._json(413, {"error": str(error)})
             if not sheets:
                 return self._json(404, {"error": "No history for those Pis in that time."})
+            if history.disk_low():
+                return self._json(507, {"error": history.paused})
             rows = [(name, history.export_rows(n, start, end, kept, every, lows)) for name, n in sheets]
             stamp = datetime.date.today().isoformat()
-            with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024) as out:
+            # Big files go next to History on the hub's disk, which the free-space guard watches.
+            with tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024, dir=history.folder()) as out:
                 if kind == "csv":
                     text = io.TextIOWrapper(out, encoding="utf-8-sig", newline="")
                     writer = csv.writer(text)
@@ -652,6 +670,9 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
             if not isinstance(body, dict):
                 return self._json(400, {"error": "bad request"})
             names = fleet.names()
+            if path == "/api/history/import" and passwords is not None and not passwords.has_password():
+                return self._json(403, {"error": "Give the dashboard a password first. On the hub, run: "
+                                                 "sudo mindful-fleet password"})
             try:
                 if path == "/api/history/import":
                     known = {name: pi_id for pi_id, name in names.items()}
@@ -954,8 +975,8 @@ def main(argv=None):
         while not stop.wait(history_store.FLUSH_SECONDS):
             try:
                 history.tick()
-            except (OSError, sqlite3.Error) as error:
-                print(f"Couldn't save History: {error}", file=sys.stderr, flush=True)
+            except Exception as error:  # noqa: BLE001 - History must keep saving after any one bad minute
+                print(f"Couldn't save History: {error!r}", file=sys.stderr, flush=True)
     if history is not None:
         threading.Thread(target=keep_history, daemon=True).start()
 

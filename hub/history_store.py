@@ -8,6 +8,7 @@ The database is one SQLite file next to the hub's state file. Python has SQLite 
 nothing to install. To spare SD cards, snapshots are written once a minute in one batch, and the hub
 stops saving new detail when its disk gets nearly full.
 """
+import contextlib
 import math
 import os
 import shutil
@@ -40,6 +41,8 @@ ROLLUP_DAYS = 3 * 365 + 1  # ...for 3 years.
 FLUSH_SECONDS = 60
 MAINTAIN_SECONDS = 3600
 LATE_SECONDS = 20  # A report can arrive a little after its interval ends; wait this long before closing it.
+MIN_WATTS = 0.1  # Below this a board isn't really reporting power, and hashes per watt would be nonsense.
+IMPORT_WINDOW = 26 * 3600  # A saved file holds 24 hours; anything far outside its own day is refused.
 MIN_FREE_BYTES = 1024**3  # Stop saving new detail when the hub's disk has less than 1 GB free.
 MAX_MARKERS = 1000
 MARKER_TEXT = 80
@@ -50,8 +53,34 @@ FULL, ROLLED = 0, 1  # The two tiers.
 
 
 def utc_offset(when):
-    """Seconds the hub's local time is ahead of UTC at that moment, so a day starts at local midnight."""
-    return time.localtime(when).tm_gmtoff or 0
+    """Seconds the hub's local time is ahead of UTC at that moment, so a day starts at local midnight.
+    0 for a time the system clock can't convert (far past or future), rather than failing."""
+    try:
+        return time.localtime(when).tm_gmtoff or 0
+    except (OverflowError, OSError, ValueError):
+        return 0
+
+
+def finite(value):
+    """True for an ordinary number (not a bool, not infinite, not too big for a float)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and abs(value) < 1e15
+    except OverflowError:
+        return False
+
+
+@contextlib.contextmanager
+def _transaction(db):
+    """One all-or-nothing write. On any error the write is undone, so the database is never left mid-write."""
+    db.execute("BEGIN")
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
 
 
 def bucket_start(when, span):
@@ -61,7 +90,7 @@ def bucket_start(when, span):
 
 def clean_interval(value):
     """An interval in whole seconds, or ValueError."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if not finite(value):
         raise ValueError("Interval must be a number of seconds.")
     seconds = int(value)
     if seconds < MIN_INTERVAL:
@@ -77,9 +106,9 @@ def snapshot_values(report):
     for key in [k for k in values if k.startswith("core")]:
         del values[key]
     watts = values.get("watts")  # Board watts, as the card's Per watt dial uses.
-    if values.get("hashrate") is not None and watts:
+    if values.get("hashrate") is not None and watts is not None and watts >= MIN_WATTS:
         values["per_watt"] = values["hashrate"] / watts
-    return {name: values[name] for name in READINGS if values.get(name) is not None}
+    return {name: values[name] for name in READINGS if finite(values.get(name))}
 
 
 class _Bucket:
@@ -92,6 +121,8 @@ class _Bucket:
     def add(self, values):
         self.n += 1
         for name, value in values.items():
+            if not finite(value):
+                continue
             self.sums[name] = self.sums.get(name, 0.0) + value
             self.counts[name] = self.counts.get(name, 0) + 1
             self.lows[name] = min(self.lows.get(name, value), value)
@@ -142,6 +173,14 @@ SQL_OLD = "SELECT pi, t, span, n, " + _ROW + " FROM snaps WHERE tier = ? AND t <
 SQL_ROLLED = "SELECT pi, t, span, n, " + _ROW + " FROM snaps WHERE pi = ? AND tier = ? AND t = ?"
 SQL_SERIES = ("SELECT (t - ?) / ? AS b, " + _AGG + " FROM snaps WHERE pi = ? AND t >= ? AND t < ? "
               "GROUP BY b ORDER BY b")
+SQL_SERIES_ONE = {  # One reading at a time, so a chart of one reading doesn't compute all 17.
+    name: ("SELECT (t - ?) / ? AS b, "
+           f"SUM({name} * n) / SUM(CASE WHEN {name} IS NULL THEN NULL ELSE n END), "
+           f"MIN(COALESCE({name}_lo, {name})), MAX(COALESCE({name}_hi, {name})) "
+           "FROM snaps WHERE pi = ? AND t >= ? AND t < ? GROUP BY b ORDER BY b")
+    for name in READINGS}
+SQL_OVERLAP = "SELECT 1 FROM snaps WHERE pi = ? AND t < ? AND t + span > ? LIMIT 1"
+SQL_ONE = "SELECT pi, t, span, n, " + _ROW + " FROM snaps WHERE pi = ? AND tier = ? AND t = ?"
 SQL_COMPARE = "SELECT SUM(span), " + _AVG + " FROM snaps WHERE pi = ? AND t >= ? AND t < ?"
 SQL_PRESENT = ("SELECT " + ", ".join(f"MAX({name} IS NOT NULL)" for name in READINGS) +
                ", COUNT(*) FROM snaps WHERE pi = ? AND t >= ? AND t < ?")
@@ -166,6 +205,9 @@ class HistoryStore:
         self.paused = None  # Plain-English reason new detail isn't being saved, or None.
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            # Only the hub's own account may read History (SQLite gives its -wal and -shm files the same mode).
+            os.close(os.open(self._path, os.O_CREAT | os.O_WRONLY, 0o600))
+            os.chmod(self._path, 0o600)
             self._address, self._uri = str(self._path), False
         else:
             # A named in-memory database, so an export can read it on its own connection.
@@ -174,11 +216,17 @@ class HistoryStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SQL_CREATE)
+        # Charts, Before and after and exports read on their own connection, so they never hold up reports.
+        self._read_lock = threading.Lock()
+        self._reader = self._connect()
         for n, pi_id, name, enabled, every in self._db.execute("SELECT n, id, name, enabled, every FROM pis"):
             self._settings[pi_id] = {"n": n, "name": name, "enabled": bool(enabled), "every": every}
 
     def _connect(self):
-        return sqlite3.connect(self._address, uri=self._uri, check_same_thread=False, isolation_level=None)
+        db = sqlite3.connect(self._address, uri=self._uri, check_same_thread=False, isolation_level=None)
+        if self._uri:
+            db.execute("PRAGMA read_uncommitted=1")  # In memory (demo, tests): readers don't wait on table locks.
+        return db
 
     # Settings
 
@@ -251,12 +299,33 @@ class HistoryStore:
             if rows and self._disk_low():
                 rows = []  # Dropped rather than risk filling the SD card.
             if rows:
-                self._db.execute("BEGIN")
-                self._db.executemany(SQL_SAVE, rows)
-                self._db.execute("COMMIT")
+                try:
+                    with _transaction(self._db):
+                        for row in rows:
+                            self._db.execute(SQL_SAVE, self._merged(row))
+                except BaseException:
+                    self._pending = rows + self._pending  # Kept for the next try.
+                    raise
             if now - self._last_maintain >= MAINTAIN_SECONDS:
                 self._last_maintain = now
                 self._maintain(now)
+
+    def _merged(self, row):
+        """A snapshot combined with one already saved for the same Pi and time (after a hub restart, or History
+        turned off and on within one interval), so the earlier part of the interval isn't lost."""
+        pi, tier, start, span = row[0], row[1], row[2], row[3]
+        existing = self._db.execute(SQL_ONE, (pi, tier, start)).fetchone()
+        if not existing:
+            return row
+        return [pi, tier, start, max(span, existing[2]), *_combine([existing, (pi, start, span, *row[4:])])]
+
+    def folder(self):
+        """Where History lives on disk (None in memory)."""
+        return str(self._path.parent) if self._path else None
+
+    def disk_low(self):
+        with self._lock:
+            return self._disk_low()
 
     def _disk_low(self):
         if not self._path:
@@ -274,18 +343,23 @@ class HistoryStore:
         cutoff = bucket_start(now - FULL_DAYS * 86400, ROLLUP_SECONDS)
         old = self._db.execute(SQL_OLD, (FULL, cutoff)).fetchall()
         groups = {}
+        long_ones = []
         for row in old:
-            groups.setdefault((row[0], bucket_start(row[1], ROLLUP_SECONDS)), []).append(row)
-        self._db.execute("BEGIN")
-        for (pi, start), rows in groups.items():
-            existing = self._db.execute(SQL_ROLLED, (pi, ROLLED, start)).fetchone()
-            if existing:
-                rows.append(existing)
-            self._db.execute(SQL_SAVE, [pi, ROLLED, start, ROLLUP_SECONDS, *_combine(rows)])
-        self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (FULL, cutoff))
-        self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (ROLLED, now - ROLLUP_DAYS * 86400))
-        self._db.execute("DELETE FROM markers WHERE t < ?", (now - ROLLUP_DAYS * 86400,))
-        self._db.execute("COMMIT")
+            if row[2] >= ROLLUP_SECONDS:
+                long_ones.append(row)  # A 6-hour or 1-day snapshot is already coarser than 3 hours: kept as it is.
+            else:
+                groups.setdefault((row[0], bucket_start(row[1], ROLLUP_SECONDS)), []).append(row)
+        with _transaction(self._db):
+            for (pi, start), rows in groups.items():
+                existing = self._db.execute(SQL_ROLLED, (pi, ROLLED, start)).fetchone()
+                if existing:
+                    rows.append(existing)
+                self._db.execute(SQL_SAVE, [pi, ROLLED, start, ROLLUP_SECONDS, *_combine(rows)])
+            for row in long_ones:
+                self._db.execute(SQL_SAVE, [row[0], ROLLED, row[1], row[2], *row[3:]])
+            self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (FULL, cutoff))
+            self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (ROLLED, now - ROLLUP_DAYS * 86400))
+            self._db.execute("DELETE FROM markers WHERE t < ?", (now - ROLLUP_DAYS * 86400,))
         if old:
             self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
@@ -312,17 +386,20 @@ class HistoryStore:
         points = max(10, min(MAX_POINTS, int(points)))
         result = {}
         for pi_id, n in self._numbers(pi_ids).items():
-            with self._lock:
-                shortest = self._db.execute("SELECT MIN(span) FROM snaps WHERE pi = ? AND t >= ? AND t < ?",
-                                            (n, start, end)).fetchone()[0]
+            with self._read_lock:
+                shortest = self._reader.execute("SELECT MIN(span) FROM snaps WHERE pi = ? AND t >= ? AND t < ?",
+                                                (n, start, end)).fetchone()[0]
                 step = max(int(shortest or 0), math.ceil((end - start) / points))
-                rows = self._db.execute(SQL_SERIES, (start, step, n, start, end)).fetchall() if shortest else []
-            out = {"times": [start + row[0] * step for row in rows], "step": step if rows else 0,
+                found = {name: self._reader.execute(SQL_SERIES_ONE[name], (start, step, n, start, end)).fetchall()
+                         for _, name in wanted} if shortest else {}
+            times = [row[0] for row in found[wanted[0][1]]] if found else []
+            out = {"times": [start + b * step for b in times], "step": step if times else 0,
                    "values": {}, "low": {}, "high": {}}
-            for i, name in wanted:
-                out["values"][name] = [_round(row[1 + 3 * i]) for row in rows]
-                out["low"][name] = [_round(row[2 + 3 * i]) for row in rows]
-                out["high"][name] = [_round(row[3 + 3 * i]) for row in rows]
+            for _, name in wanted:
+                rows = found.get(name, [])
+                out["values"][name] = [_round(row[1]) for row in rows]
+                out["low"][name] = [_round(row[2]) for row in rows]
+                out["high"][name] = [_round(row[3]) for row in rows]
             result[pi_id] = out
         return result
 
@@ -333,9 +410,9 @@ class HistoryStore:
             return None
         span, when = int(days * 86400), int(when)
         answer = {"days": days}
-        with self._lock:
+        with self._read_lock:
             for label, low, high in (("before", when - span, when), ("after", when, when + span)):
-                row = self._db.execute(SQL_COMPARE, (n, low, high)).fetchone()
+                row = self._reader.execute(SQL_COMPARE, (n, low, high)).fetchone()
                 answer[label] = {name: _round(value) for name, value in zip(READINGS, row[1:], strict=True) if value is not None}
                 answer[f"{label}_hours"] = round((row[0] or 0) / 3600, 1)
         return answer
@@ -349,12 +426,13 @@ class HistoryStore:
         numbers = self._numbers(pi_ids)
         with self._lock:
             names = {pi_id: self._settings[pi_id]["name"] for pi_id in numbers}
+        with self._read_lock:
             has = [False] * len(READINGS)
             sheets = []
             total = 0
             for pi_id, n in numbers.items():
-                row = self._db.execute(SQL_PRESENT, (n, start, end)).fetchone()
-                count = self._db.execute(SQL_GROUPS, (start, every, n, start, end)).fetchone()[0] if every else row[-1]
+                row = self._reader.execute(SQL_PRESENT, (n, start, end)).fetchone()
+                count = self._reader.execute(SQL_GROUPS, (start, every, n, start, end)).fetchone()[0] if every else row[-1]
                 if not count:
                     continue
                 has = [a or bool(b) for a, b in zip(has, row[:-1], strict=True)]
@@ -397,14 +475,16 @@ class HistoryStore:
     def markers(self, start, end):
         with self._lock:
             ids = {s["n"]: pi_id for pi_id, s in self._settings.items()}
-            rows = self._db.execute("SELECT id, pi, t, text FROM markers WHERE t >= ? AND t < ? ORDER BY t", (start, end)).fetchall()
+        with self._read_lock:
+            rows = self._reader.execute("SELECT id, pi, t, text FROM markers WHERE t >= ? AND t < ? ORDER BY t",
+                                        (start, end)).fetchall()
         return [{"id": mid, "pi": ids.get(pi), "t": t, "text": text} for mid, pi, t, text in rows]
 
     def add_marker(self, pi_id, name, when, text):
         text = " ".join(str(text or "").split())[:MARKER_TEXT]
         if not text:
             raise ValueError("Write a few words for the marker, such as \"Ice cooler installed\".")
-        if isinstance(when, bool) or not isinstance(when, (int, float)) or not math.isfinite(when):
+        if not finite(when):
             raise ValueError("The marker needs a time.")
         with self._lock:
             if self._db.execute("SELECT COUNT(*) FROM markers").fetchone()[0] >= MAX_MARKERS:
@@ -419,15 +499,16 @@ class HistoryStore:
 
     # Loading a saved 24 hours (the file the dashboard's console line saved before History was on)
 
-    def import_saved(self, saved, known):
+    def import_saved(self, saved, known, now=None):
         """saved: the downloaded file. known: {hostname: pi id} for Pis on this dashboard.
-        Adds 5-minute snapshots only where History has none. Returns {hostname: snapshots added}."""
+        Adds 5-minute snapshots only where History has nothing at all for that Pi, and only within the file's
+        own day (never in the future, never older than History keeps). Returns {hostname: snapshots added}."""
+        now = self._clock() if now is None else now
         charts = saved.get("charts") if isinstance(saved, dict) else None
         if not isinstance(charts, dict):
             raise ValueError("That isn't a saved MindfulFleet file.")
         added = {}
-        with self._lock:
-            self._db.execute("BEGIN")
+        with self._lock, _transaction(self._db):
             for hostname, chart in list(charts.items())[:256]:
                 pi_id = known.get(hostname)
                 if not pi_id or not isinstance(chart, dict):
@@ -435,23 +516,30 @@ class HistoryStore:
                 times, values = chart.get("times"), chart.get("values")
                 if not isinstance(times, list) or not isinstance(values, dict):
                     continue
+                good = [t for t in times[:2000] if finite(t) and now - ROLLUP_DAYS * 86400 <= t <= now + 60]
+                if not good:
+                    added[hostname] = 0
+                    continue
+                newest = max(good)
                 n = self._pi_number(pi_id, hostname)
                 count = 0
                 for i, when in enumerate(times[:2000]):
-                    if isinstance(when, bool) or not isinstance(when, (int, float)) or not math.isfinite(when):
+                    if not finite(when) or not newest - IMPORT_WINDOW <= when <= newest:
                         continue
-                    row = [n, FULL, int(when), 300, 20]  # 5-minute averages of about 20 reports each.
+                    when = int(when)
+                    if self._db.execute(SQL_OVERLAP, (n, when + 300, when)).fetchone():
+                        continue  # History already has something for these 5 minutes.
+                    row = [n, FULL, when, 300, 20]  # 5-minute averages of about 20 reports each.
                     found = False
                     for name in READINGS:
                         series = values.get(name)
                         value = series[i] if isinstance(series, list) and i < len(series) else None
-                        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+                        ok = finite(value)
                         row += [float(value) if ok else None, None, None]
                         found = found or ok
                     if found:
                         count += self._db.execute(SQL_SAVE_IF_EMPTY, row).rowcount
                 added[hostname] = count
-            self._db.execute("COMMIT")
         return added
 
     def flush_now(self):

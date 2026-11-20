@@ -27,6 +27,8 @@ def sheet_names(names):
     seen, out = set(), []
     for name in names:
         base = _BAD_SHEET.sub("-", _CONTROL.sub("", name)).strip("' ") or "Pi"
+        if base.lower() == "history":
+            base = "History (Pi)"  # Excel keeps the name History for itself.
         candidate, number = base[:31], 2
         while candidate.lower() in seen:
             suffix = f" ({number})"
@@ -44,7 +46,7 @@ def _text(value):
 def write(target, heading, sheets, utc_offset):
     """target: a binary file. heading: column names. sheets: [(name, rows)], each row (unix seconds, number...).
     utc_offset(seconds) gives the hub's local offset, so times read as the hub's clock."""
-    names = sheet_names([name for name, _ in sheets]) or ["History"]
+    names = sheet_names([name for name, _ in sheets]) or ["Data"]
     letters = [column_letters(i) for i in range(len(heading))]
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as book:
         book.writestr("[Content_Types].xml", _content_types(len(names)))
@@ -52,7 +54,7 @@ def write(target, heading, sheets, utc_offset):
         book.writestr("xl/workbook.xml", _workbook(names))
         book.writestr("xl/_rels/workbook.xml.rels", _workbook_rels(len(names)))
         book.writestr("xl/styles.xml", _STYLES)
-        for number, (_, rows) in enumerate(sheets or [("History", [])], start=1):
+        for number, (_, rows) in enumerate(sheets or [("Data", [])], start=1):
             with book.open(f"xl/worksheets/sheet{number}.xml", "w", force_zip64=True) as out:
                 out.write(_SHEET_START.encode())
                 cells = "".join(f'<c r="{letters[i]}1" t="inlineStr" s="2"><is><t>{_text(name)}</t></is></c>'

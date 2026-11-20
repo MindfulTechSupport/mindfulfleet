@@ -264,13 +264,112 @@ class StoreTests(unittest.TestCase):
                       "values": {"temp": [70.0, None, 1, True], "hashrate": [900, 910, 1, None], "evil": ["x"]}},
             "Stranger": {"times": [START], "values": {"temp": [1]}},
         }}
-        added = self.store.import_saved(saved, {"Three": PI})
+        added = self.store.import_saved(saved, {"Three": PI}, now=START + 3600)
         self.assertEqual(added, {"Three": 2})
-        self.assertEqual(self.store.import_saved(saved, {"Three": PI}), {"Three": 0})  # Never twice.
+        self.assertEqual(self.store.import_saved(saved, {"Three": PI}, now=START + 3600), {"Three": 0})  # Never twice.
         self.assertEqual(self.store.compare(PI, START + 1, 1)["before"]["temp"], 70.0)
         for bad in ({}, {"charts": []}, [1], "text"):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.store.import_saved(bad, {"Three": PI})
+
+
+class ReviewFixTests(unittest.TestCase):
+    """Findings from the independent review of 0.2.15 (Nov 20), one test each."""
+
+    def setUp(self):
+        self.clock = [START]
+        self.store = hs.HistoryStore(None, clock=lambda: self.clock[0])
+
+    def test_hostile_import_times_are_refused_and_saving_carries_on(self):
+        self.store.set(PI, "Three", enabled=True, every=15)
+        for bad in (1e19, -1e17, 10**400, float("inf"), START + 10 * DAY, START - 4 * 365 * DAY):
+            with self.subTest(bad=bad):
+                saved = {"charts": {"Three": {"times": [bad], "values": {"temp": [1.0]}}}}
+                self.assertEqual(self.store.import_saved(saved, {"Three": PI}), {"Three": 0})
+        self.store.add(report(), START)
+        self.store.tick(START + 3600)  # Would fail with "cannot start a transaction" if one was left open.
+        self.assertEqual(row_count(self.store), 1)
+
+    def test_a_failed_write_keeps_its_snapshots_for_the_next_try(self):
+        self.store.set(PI, "Three", enabled=True, every=15)
+        self.store.add(report(), START)
+        real = self.store._db
+
+        class Failing:
+            def execute(self, sql, *args):
+                if sql.startswith("INSERT"):
+                    raise hs.sqlite3.OperationalError("database is locked")
+                return real.execute(sql, *args)
+
+        self.store._db = Failing()
+        with self.assertRaises(hs.sqlite3.OperationalError):
+            self.store.tick(START + 60)
+        self.store._db = real
+        self.store.tick(START + 120)
+        self.assertEqual(row_count(self.store), 1)
+
+    def test_a_far_past_row_doesnt_stop_the_cleanup(self):
+        self.store._db.execute(hs.SQL_SAVE, [1, hs.FULL, -10**17, 900, 1] + [None] * len(hs.COLUMNS))
+        self.store.tick(START)
+        self.assertEqual(row_count(self.store), 0)  # Folded and then dropped as older than 3 years, without an error.
+
+    def test_a_restart_inside_an_interval_merges_instead_of_overwriting(self):
+        self.store.set(PI, "Three", enabled=True, every=DAY)
+        day = hs.bucket_start(START, DAY)
+        for i in range(10):
+            self.store.add(report(temp_c=30.0), day + 3600 + i * 15)
+        self.store.flush_now()  # The hub stops in the morning...
+        for i in range(10):
+            self.store.add(report(temp_c=60.0), day + 15 * 3600 + i * 15)  # ...and is back in the afternoon.
+        self.store.flush_now()
+        self.assertEqual(self.store._db.execute("SELECT n, temp, temp_lo, temp_hi FROM snaps").fetchall(),
+                         [(20, 45.0, 30.0, 60.0)])
+
+    def test_impossible_readings_are_never_saved(self):
+        self.store.set(PI, "Three", enabled=True, every=60)
+        self.store.add(report(board_watts=1e-300, temp_c=float("inf")), START)
+        self.store.add(report(board_watts=0.05), START + 15)
+        self.store.tick(START + 3600)
+        row = self.store._db.execute("SELECT per_watt, temp FROM snaps").fetchone()
+        self.assertEqual(row, (None, 50.0))  # The infinite temperature was dropped; the real one kept.
+        self.assertNotIn("Infinity", json.dumps(self.store.series([PI], START, START + 120, ["per_watt", "temp"])))
+
+    def test_the_database_is_private_to_the_hub(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "history.db"
+            store = hs.HistoryStore(path, clock=lambda: START, min_free_bytes=0)
+            store.set(PI, "Three", enabled=True, every=15)
+            store.add(report(), START)
+            store.flush_now()
+            for part in (path, Path(f"{path}-wal")):
+                with self.subTest(part=part.name):
+                    self.assertEqual(part.stat().st_mode & 0o777, 0o600)
+
+    def test_long_snapshots_keep_their_own_length_when_they_get_old(self):
+        self.store.set(PI, "Three", enabled=True, every=DAY)
+        self.store.add(report(), START - 100 * DAY)
+        self.store.tick(START)
+        self.assertEqual(self.store._db.execute("SELECT tier, span FROM snaps").fetchall(), [(hs.ROLLED, DAY)])
+
+    def test_import_fills_only_empty_stretches(self):
+        self.store.set(PI, "Three", enabled=True, every=60)
+        self.store.add(report(temp_c=50.0), START + 30)
+        self.store.tick(START + 3600)
+        saved = {"charts": {"Three": {"times": [START - 300, START, START + 120], "values": {"temp": [40.0, 41.0, 42.0]}}}}
+        self.assertEqual(self.store.import_saved(saved, {"Three": PI}, now=START + 3600), {"Three": 2})
+        real = hs.bucket_start(START + 30, 60)
+        self.assertEqual(self.store._db.execute("SELECT temp FROM snaps WHERE t = ?", (real,)).fetchone(), (50.0,))
+        self.assertEqual(row_count(self.store), 3)  # The real snapshot and the two imported ones around it.
+
+    def test_huge_numbers_are_bad_requests_not_crashes(self):
+        self.assertIsNone(hub._whole(10**400, 0, 10))
+        with self.assertRaises(ValueError):
+            hs.clean_interval(10**400)
+        with self.assertRaises(ValueError):
+            self.store.add_marker(PI, "Three", 10**400, "x")
+
+    def test_reserved_sheet_name(self):
+        self.assertEqual(xlsx.sheet_names(["History", "history"]), ["History (Pi)", "History (Pi) (2)"])
 
 
 class PlanTests(unittest.TestCase):
@@ -446,6 +545,63 @@ class HistoryApiTests(unittest.TestCase):
         saved = {"charts": {"Three": {"times": [now - 600], "values": {"temp": [44.0]}}}}
         status, body = self.call("/api/history/import", saved, "POST")
         self.assertEqual((status, body), (200, {"added": {"Three": 1}}))
+
+    def test_export_and_import_wait_for_a_dashboard_password(self):
+        class NoPasswordYet:
+            def has_password(self):
+                return False
+
+            def session_ok(self, session):
+                return True
+
+        self.fleet = hub.Fleet()
+        self.history = hs.HistoryStore(None)
+        handler = hub.make_handler(self.fleet, "secret", history=self.history, plan=plans.Plan(fixed="owner"),
+                                   passwords=NoPasswordYet())
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+        self.report_in()
+        now = int(time.time())
+        status, body = self.call(f"/api/history/export?ids={PI}&from={now - 60}&to={now}&format=csv")
+        self.assertEqual(status, 403)
+        self.assertIn("password", body["error"])
+        self.assertEqual(self.call("/api/history/import", {"charts": {}}, "POST")[0], 403)
+
+    def test_head_doesnt_build_an_export(self):
+        self.start_hub("owner")
+        now = int(time.time())
+        request = urllib.request.Request(f"{self.base}/api/history/export?ids={PI}&from={now - 60}&to={now}&format=csv",
+                                         method="HEAD")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request)
+        self.assertEqual(caught.exception.code, 405)
+
+    def test_one_export_at_a_time(self):
+        self.start_hub("owner")
+        self.report_in()
+        self.call("/api/history/settings", {"ids": [PI], "enabled": True, "every": 15}, "PUT")
+        self.report_in()
+        self.history.flush_now()
+        now = int(time.time())
+        started, finish = threading.Event(), threading.Event()
+        real = self.history.export_rows
+
+        def slow(*args, **kwargs):
+            started.set()
+            finish.wait(5)
+            yield from real(*args, **kwargs)
+
+        with mock.patch.object(self.history, "export_rows", slow):
+            first = threading.Thread(target=self.call, args=(f"/api/history/export?ids={PI}&from={now - 600}&to={now + 60}&format=csv",))
+            first.start()
+            self.assertTrue(started.wait(5))
+            status, body = self.call(f"/api/history/export?ids={PI}&from={now - 600}&to={now + 60}&format=csv")
+            finish.set()
+            first.join(5)
+        self.assertEqual(status, 429)
 
     def test_no_history_store_means_no_history(self):
         fleet = hub.Fleet()
