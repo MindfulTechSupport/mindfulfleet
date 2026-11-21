@@ -326,3 +326,9 @@ code { font-family: ui-monospace, monospace; }
 .connect code { margin-right: 8px; }
 .cheat dt { margin-top: 10px; font-weight: 600; }
 .cheat dd { margin: 2px 0 0; }
+
+/* #70: the eye button beside each password box. */
+.password-wrap { display: flex; align-items: center; gap: 6px; }
+.password-wrap input { flex: 1; min-width: 0; }
+.eye { display: inline-flex; align-items: center; justify-content: center; padding: 6px; border: 1px solid var(--track); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer; }
+.eye:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

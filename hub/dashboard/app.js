@@ -15,7 +15,7 @@ const ROWS = [
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
   ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["sensor", "Power sensors"],
   ["history", "24-hour chart"], ["averages", "Averages"],
-  ["uptime", "Running for"], ["system", "System"], ["connect", "Connect (SSH)"],
+  ["uptime", "Running for"], ["system", "System"], ["kernel", "Kernel memory"], ["connect", "Connect (SSH)"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
 const SHARED_KEYS = ["order", "groups", "members", "hidden", "price", "region"];
@@ -490,6 +490,14 @@ function readings(pi) {
       system.appendChild(el("small", "detail update", `Update available: ${latestVersion}`));
     }
     row("system", "System", system);
+  }
+  if (pi.page_kb != null || pi.huge_pages != null) {
+    // Kernel check (#44): what the kernel offers XMRig, in plain words.
+    const pages = pi.page_kb != null ? `${pi.page_kb} KB memory pages` : "Memory page size unknown";
+    const huge = pi.huge_pages ? `${pi.huge_pages} huge pages reserved` : "no huge pages reserved";
+    const detail = pi.huge_pages ? "XMRig can use them for a faster hashrate." : "XMRig runs without huge pages, which is normal on a stock Raspberry Pi kernel.";
+    row("kernel", "Kernel memory", text({ level: "", text: `${pages}, ${huge}` },
+      `${detail}${pi.thp ? ` Automatic huge pages: ${pi.thp}.` : ""}`));
   }
   if (pi.ip) row("connect", "Connect", sshBox(pi.ip));
   const parts = [facts];
@@ -1364,6 +1372,37 @@ function showVersion(version, latest) {
   bar.hidden = false;
 }
 
+/* #70: an eye button next to every password box, to see what you typed. */
+function eyeIcon(open) {
+  const icon = svg("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": "true", class: "eye-icon" });
+  svg("path", { d: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z", fill: "none", stroke: "currentColor", "stroke-width": 2 }, icon);
+  svg("circle", { cx: 12, cy: 12, r: 3, fill: "none", stroke: "currentColor", "stroke-width": 2 }, icon);
+  if (!open) svg("line", { x1: 3, y1: 21, x2: 21, y2: 3, stroke: "currentColor", "stroke-width": 2 }, icon);
+  return icon;
+}
+
+function setUpPasswordEyes() {
+  for (const input of document.querySelectorAll('input[type="password"]')) {
+    const wrap = el("span", "password-wrap");
+    const eye = el("button", "eye");
+    eye.type = "button";
+    const show = (visible) => {
+      input.type = visible ? "text" : "password";
+      eye.replaceChildren(eyeIcon(!visible));
+      const words = visible ? "Hide password" : "Show password";
+      eye.title = words;
+      eye.setAttribute("aria-label", words);
+      eye.setAttribute("aria-pressed", String(visible));
+    };
+    eye.addEventListener("click", () => show(input.type === "password"));
+    // Hidden again whenever its form is sent, so the next person at the screen doesn't see it.
+    if (input.form) input.form.addEventListener("submit", () => show(false));
+    input.replaceWith(wrap);
+    wrap.append(input, eye);
+    show(false);
+  }
+}
+
 /* "How do I set it?" on the no-password banner: the steps, with this hub's address filled in (D-082 part 1). */
 function setUpPasswordHelp() {
   const help = document.getElementById("password-help");
@@ -1662,6 +1701,7 @@ function start() {
 
 async function begin() {
   setUpSignIn();
+  setUpPasswordEyes();
   setUpPasswordHelp();
   let status = { password_set: false, signed_in: true };
   try {

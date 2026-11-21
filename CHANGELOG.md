@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.17 (2026-11-21)
+
+- Every password box has an eye button to show what you typed, and hides it again when you press Sign in or Change password.
+- Each card has a Kernel memory row: the memory page size, how many huge pages are reserved, and the automatic huge pages setting, with what that means for XMRig.
+- The hub answers browsers only at its own addresses: an IP address, a one-word name, localhost, or a name ending in .local, .lan, .home.arpa, .internal or .ts.net. This stops a hostile web page from reaching the dashboard through a name it controls (DNS rebinding). To open the hub by another name, add it to MINDFUL_FLEET_ALLOWED_HOSTS in /etc/mindful-fleet/hub.env and restart the hub; an entry like .trycloudflare.com allows every name under it, for a tunnel. The Pis' reports are checked by the fleet token as before, whatever name they use.
+
 ## 0.2.16 (2026-11-21)
 
 - Settings → Region and units: Metric (°C) or Imperial (°F) for every temperature on the cards, gauges, charts, History, Before and after and the warnings; the money used for the electricity cost; how dates look (Nov 21, 2026 · 21 Nov 2026 · 2026-11-21); a 12- or 24-hour clock; the time zone; storage sizes counted like Linux tools (1 GB = 1,024 MB) or like the box (1,000 MB); network speed in MB/s or Mbps. Picking a region fills in its usual choices, and each one can still be changed. The hub keeps every reading in °C and world time, so History stays correct whatever you pick, and every browser sees the same choices.

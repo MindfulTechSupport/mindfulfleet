@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.16"
+VERSION = "0.2.17"
 XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
 
@@ -327,6 +327,23 @@ def read_os_name(root="/"):
     return match.group(1)[:60] if match else None
 
 
+def read_kernel_memory(root="/"):
+    """Kernel check (#44): memory page size and huge pages, which decide what XMRig can use."""
+    info = {"page_kb": None, "huge_pages": None, "thp": None}
+    if root == "/":
+        try:
+            info["page_kb"] = os.sysconf("SC_PAGE_SIZE") // 1024
+        except (ValueError, OSError):
+            pass
+    match = re.search(r"^HugePages_Total:\s+(\d+)", _read(root, "/proc/meminfo") or "", re.M)
+    if match:
+        info["huge_pages"] = int(match.group(1))
+    match = re.search(r"\[(always|madvise|never)\]", _read(root, "/sys/kernel/mm/transparent_hugepage/enabled") or "")
+    if match:
+        info["thp"] = match.group(1)
+    return info
+
+
 def read_cpu_times(root="/"):
     """Return {core_index: (busy_ticks, total_ticks)} from /proc/stat."""
     text = _read(root, "/proc/stat") or ""
@@ -481,6 +498,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         "top_process_cpu": top_cpu,
         "os_name": read_os_name(root),
         "kernel": os.uname().release[:40] if root == "/" else None,
+        **read_kernel_memory(root),
     }
 
 

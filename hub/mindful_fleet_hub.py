@@ -6,6 +6,7 @@ import datetime
 import getpass
 import hmac
 import io
+import ipaddress
 import json
 import math
 import os
@@ -32,7 +33,7 @@ import plan as plans  # noqa: E402
 import xlsx  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.16"
+VERSION = "0.2.17"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -68,6 +69,43 @@ REGION_CHOICES = {
 REGION_CURRENCIES = ("USD", "EUR", "GBP", "CAD", "AUD", "NZD", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "JPY",
                      "CNY", "INR", "BRL", "MXN", "ZAR", "KRW", "SGD", "HKD", "PHP", "ILS", "TRY")
 _TIMEZONE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+# Host allowlist (A-055): names that can only point at the owner's own network. A hostile web page can make a
+# public name point at the hub (DNS rebinding), but it can't use these, an IP address or a one-word name.
+LOCAL_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localhost", ".ts.net")
+HOST_REFUSED = ("This hub only answers to its own address, such as its IP address or its name.local. To open it by "
+                "another name, add that name to MINDFUL_FLEET_ALLOWED_HOSTS in /etc/mindful-fleet/hub.env "
+                "(names separated by commas; .example.com allows every name under it) and restart the hub.\n")
+
+
+def _is_ip(text):
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
+
+
+def host_allowed(header, extra=()):
+    """A-055: answer browsers only at an address that can't belong to another website."""
+    if not header:
+        return True  # Every browser sends Host; a request without one didn't come from a web page.
+    host = header.strip().lower()
+    if host.startswith("["):
+        end = host.find("]")
+        return end > 1 and _is_ip(host[1:end])
+    name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    name = name.rstrip(".")
+    if not name:
+        return False
+    if _is_ip(name) or name == "localhost" or "." not in name or name.endswith(LOCAL_SUFFIXES):
+        return True
+    # An entry starting with a dot, such as .trycloudflare.com for a tunnel, allows every name under it.
+    return name in extra or any(entry.startswith(".") and name.endswith(entry) for entry in extra)
+
+
+def allowed_hosts_setting(text):
+    """MINDFUL_FLEET_ALLOWED_HOSTS: extra names the owner uses for the hub, separated by commas."""
+    return tuple(part.strip().lower().rstrip(".") for part in (text or "").split(",") if part.strip())
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
@@ -188,6 +226,9 @@ def clean_report(raw):
         "algo": _text(raw.get("algo"), 30),
         "miner_version": _text(raw.get("miner_version"), 20),
         "kernel": _text(raw.get("kernel"), 40),
+        "page_kb": _number(raw.get("page_kb"), 0, 1 << 20),
+        "huge_pages": _number(raw.get("huge_pages"), 0, 1 << 30),
+        "thp": raw.get("thp") if raw.get("thp") in ("always", "madvise", "never") else None,
     }
 
 
@@ -425,7 +466,8 @@ def _local_text(seconds):
     return datetime.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discovery=None, history=None, plan=None):
+def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discovery=None, history=None, plan=None,
+                 allowed_hosts=()):
     """passwords is an auth.Auth. Without one, or before a password is set, the dashboard is open, as before 0.3.0.
     discovery is a discover.Discovery for the Find my Pis button. history is a history_store.HistoryStore and
     plan a plan.Plan: History needs Plus, and exporting it needs Pro."""
@@ -439,6 +481,15 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
 
         def log_message(self, *args):
             pass  # Reports arrive constantly. Logging them would wear out SD cards.
+
+        def _host_ok(self):
+            """A-055: the Pis' reports carry the fleet token, so they're checked by that instead of their address."""
+            path = self.path.split("?", 1)[0]
+            if path in ("/api/report", "/healthz") or host_allowed(self.headers.get("Host"), allowed_hosts):
+                return True
+            self.close_connection = True
+            self._send(403, HOST_REFUSED.encode(), "text/plain; charset=utf-8")
+            return False
 
         def _send(self, status, body, content_type="application/json", headers=()):
             self.send_response(status)
@@ -733,6 +784,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
                 return self._json(400, {"error": str(error)})
 
         def do_GET(self):
+            if not self._host_ok():
+                return None
             path = self.path.split("?", 1)[0]
             if path == "/api/auth":
                 return self._json(200, {"password_set": bool(passwords and passwords.has_password()),
@@ -765,6 +818,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
         do_HEAD = do_GET
 
         def do_PUT(self):
+            if not self._host_ok():
+                return None
             # Browsers can't send this from another site without asking first, and the hub never says yes.
             if self.path == "/api/history/settings":
                 if not self._signed_in():
@@ -791,6 +846,8 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
             self._json(200, layout)
 
         def do_POST(self):
+            if not self._host_ok():
+                return None
             # Read errors close the connection, since the body may be unread.
             if passwords is not None and self.path in ("/api/sign-in", "/api/sign-out", "/api/password"):
                 return self._auth_post(self.path)
@@ -873,6 +930,7 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "top_process": "xmrig" if sum(cpu or [0]) > 250 else "python3",
         "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),
         "kernel": "6.18.50+rpt-rpi-2712",
+        "page_kb": 16, "huge_pages": 0, "thp": "madvise",
     }
 
 
@@ -990,7 +1048,8 @@ def main(argv=None):
             print(f"History is off: couldn't open {where} ({error}). Move that file aside and restart the hub "
                   "to start History afresh.", file=sys.stderr, flush=True)
             history = None
-    handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder),
+    allowed = allowed_hosts_setting(os.environ.get("MINDFUL_FLEET_ALLOWED_HOSTS"))
+    handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder), allowed_hosts=allowed,
                            history=history, plan=plan)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     server.daemon_threads = True
