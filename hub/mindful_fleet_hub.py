@@ -13,6 +13,7 @@ import os
 import random
 import re
 import signal
+import socket
 import sqlite3
 import sys
 import tempfile
@@ -71,10 +72,13 @@ REGION_CURRENCIES = ("USD", "EUR", "GBP", "CAD", "AUD", "NZD", "CHF", "SEK", "NO
 _TIMEZONE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
 # Host allowlist (A-055): names that can only point at the owner's own network. A hostile web page can make a
 # public name point at the hub (DNS rebinding), but it can't use these, an IP address or a one-word name.
-LOCAL_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localhost", ".ts.net")
-HOST_REFUSED = ("This hub only answers to its own address, such as its IP address or its name.local. To open it by "
-                "another name, add that name to MINDFUL_FLEET_ALLOWED_HOSTS in /etc/mindful-fleet/hub.env "
-                "(names separated by commas; .example.com allows every name under it) and restart the hub.\n")
+LOCAL_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localhost", ".ts.net",
+                  ".home", ".localdomain", ".fritz.box", ".attlocal.net")  # The last four: names home routers hand out.
+_HOST_HEADER_RE = re.compile(r"^(?:\[([0-9a-f:.]+)\]|([a-z0-9.-]+))(?::(\d{1,5}))?$")
+HOST_REFUSED = ("This hub didn't answer to the name \"{name}\", because a web page from another site could use a name "
+                "like that to reach it. Open it by its IP address or its name.local instead. To keep using this name, "
+                "add it to MINDFUL_FLEET_ALLOWED_HOSTS in /etc/mindful-fleet/hub.env (names separated by commas; "
+                ".example.com allows every name under it), then run: sudo systemctl restart mindful-fleet-hub\n")
 
 
 def _is_ip(text):
@@ -87,14 +91,14 @@ def _is_ip(text):
 
 def host_allowed(header, extra=()):
     """A-055: answer browsers only at an address that can't belong to another website."""
-    if not header:
+    if header is None:
         return True  # Every browser sends Host; a request without one didn't come from a web page.
-    host = header.strip().lower()
-    if host.startswith("["):
-        end = host.find("]")
-        return end > 1 and _is_ip(host[1:end])
-    name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
-    name = name.rstrip(".")
+    match = _HOST_HEADER_RE.match(header.strip().lower())
+    if not match:
+        return False
+    if match.group(1) is not None:
+        return _is_ip(match.group(1))
+    name = match.group(2).rstrip(".")
     if not name:
         return False
     if _is_ip(name) or name == "localhost" or "." not in name or name.endswith(LOCAL_SUFFIXES):
@@ -105,7 +109,25 @@ def host_allowed(header, extra=()):
 
 def allowed_hosts_setting(text):
     """MINDFUL_FLEET_ALLOWED_HOSTS: extra names the owner uses for the hub, separated by commas."""
-    return tuple(part.strip().lower().rstrip(".") for part in (text or "").split(",") if part.strip())
+    names = []
+    for part in (text or "").split(","):
+        name = part.strip().lower()
+        name = "." + name[2:] if name.startswith("*.") else name  # *.example.com means the same as .example.com
+        name = re.sub(r":\d+$", "", name).rstrip(".")  # A port doesn't matter here.
+        if name and re.fullmatch(r"\.?[a-z0-9-]+(\.[a-z0-9-]+)*", name):
+            names.append(name)
+    return tuple(names)
+
+
+def own_names():
+    """This computer's own names, which the owner's network already uses for it."""
+    names = set()
+    for get in (socket.gethostname, socket.getfqdn):
+        try:
+            names.add(get().lower().rstrip("."))
+        except OSError:
+            pass
+    return tuple(n for n in names if n)
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
@@ -142,6 +164,13 @@ def _text(value, length):
     if not isinstance(value, str):
         return None
     return "".join(ch for ch in value[:length] if ch.isprintable()) or None
+
+
+def _whole_count(value, high):
+    """A whole number from 0 to high; anything else is dropped rather than refusing the report."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= high:
+        return None
+    return value
 
 
 def _ups(value):
@@ -241,8 +270,8 @@ def clean_report(raw):
         "algo": _text(raw.get("algo"), 30),
         "miner_version": _text(raw.get("miner_version"), 20),
         "kernel": _text(raw.get("kernel"), 40),
-        "page_kb": _number(raw.get("page_kb"), 0, 1 << 20),
-        "huge_pages": _number(raw.get("huge_pages"), 0, 1 << 30),
+        "page_kb": _whole_count(raw.get("page_kb"), 1 << 20),
+        "huge_pages": _whole_count(raw.get("huge_pages"), 1 << 30),
         "thp": raw.get("thp") if raw.get("thp") in ("always", "madvise", "never") else None,
         "ups": _ups(raw.get("ups")),
     }
@@ -501,10 +530,11 @@ def make_handler(fleet, token, static_dir=DASHBOARD_DIR, passwords=None, discove
         def _host_ok(self):
             """A-055: the Pis' reports carry the fleet token, so they're checked by that instead of their address."""
             path = self.path.split("?", 1)[0]
-            if path in ("/api/report", "/healthz") or host_allowed(self.headers.get("Host"), allowed_hosts):
+            if path == "/api/report" or host_allowed(self.headers.get("Host"), allowed_hosts):
                 return True
             self.close_connection = True
-            self._send(403, HOST_REFUSED.encode(), "text/plain; charset=utf-8")
+            name = re.sub(r"[^a-z0-9.:\[\]-]", "", (self.headers.get("Host") or "").lower())[:80]
+            self._send(403, HOST_REFUSED.format(name=name).encode(), "text/plain; charset=utf-8")
             return False
 
         def _send(self, status, body, content_type="application/json", headers=()):
@@ -1066,7 +1096,7 @@ def main(argv=None):
             print(f"History is off: couldn't open {where} ({error}). Move that file aside and restart the hub "
                   "to start History afresh.", file=sys.stderr, flush=True)
             history = None
-    allowed = allowed_hosts_setting(os.environ.get("MINDFUL_FLEET_ALLOWED_HOSTS"))
+    allowed = allowed_hosts_setting(os.environ.get("MINDFUL_FLEET_ALLOWED_HOSTS")) + own_names()
     handler = make_handler(fleet, token, passwords=passwords, discovery=discover.Discovery(finder), allowed_hosts=allowed,
                            history=history, plan=plan)
     server = ThreadingHTTPServer((args.host, args.port), handler)

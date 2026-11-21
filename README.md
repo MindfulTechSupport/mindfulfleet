@@ -165,6 +165,8 @@ CPU load never changes the color, because some computers, such as miners, are me
 
 ## Security
 
+**Which names the hub answers to.** The dashboard answers only at addresses that can't belong to another website: an IP address, a one-word name, localhost, the hub's own name, or a name ending in .local, .lan, .home, .home.arpa, .internal, .localdomain, .fritz.box, .attlocal.net or .ts.net. That stops a hostile web page from reaching it through a name the page controls (DNS rebinding). If you open the hub by another name, such as a dynamic DNS name or a tunnel, add it to `MINDFUL_FLEET_ALLOWED_HOSTS` in `/etc/mindful-fleet/hub.env` (names separated by commas; `.example.com` allows every name under it), then run `sudo systemctl restart mindful-fleet-hub`. Updates keep the setting. The Pis' reports are checked by the fleet token, whatever name they use.
+
 - The reporter only sends numbers. It accepts no commands and opens no ports.
 - Reports need the fleet token. Both programs run as an unprivileged user under a locked-down service.
 - The hub contacts GitHub every 6 hours to see whether a newer version exists. It sends nothing about your fleet. Start it with `--no-update-check` to turn this off.

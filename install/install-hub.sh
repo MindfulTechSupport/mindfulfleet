@@ -19,17 +19,21 @@ install -d -m 755 /opt/mindful-fleet/tools
 install -m 755 "$SOURCE"/tools/mindful_fleet_tools.py /opt/mindful-fleet/tools/
 
 install -d -m 750 -o root -g mindful-fleet /etc/mindful-fleet
+EXTRA=""
 if [[ -f /etc/mindful-fleet/hub.env ]]; then
   TOKEN="$(sed -n 's/^MINDFUL_FLEET_TOKEN=//p' /etc/mindful-fleet/hub.env)"
+  # Keep the owner's own lines, such as MINDFUL_FLEET_ALLOWED_HOSTS, through every update.
+  EXTRA="$(grep -vE '^MINDFUL_FLEET_(TOKEN|PORT|STATE)=' /etc/mindful-fleet/hub.env || true)"
 else
   TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 fi
 umask 027
-cat > /etc/mindful-fleet/hub.env <<EOF
-MINDFUL_FLEET_TOKEN=$TOKEN
-MINDFUL_FLEET_PORT=$PORT
-MINDFUL_FLEET_STATE=/var/lib/mindful-fleet/fleet.json
-EOF
+{
+  echo "MINDFUL_FLEET_TOKEN=$TOKEN"
+  echo "MINDFUL_FLEET_PORT=$PORT"
+  echo "MINDFUL_FLEET_STATE=/var/lib/mindful-fleet/fleet.json"
+  if [[ -n "$EXTRA" ]]; then printf '%s\n' "$EXTRA"; fi
+} > /etc/mindful-fleet/hub.env
 chown root:mindful-fleet /etc/mindful-fleet/hub.env
 chmod 640 /etc/mindful-fleet/hub.env
 

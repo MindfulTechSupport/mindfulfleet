@@ -494,7 +494,7 @@ function readings(pi) {
   if (pi.page_kb != null || pi.huge_pages != null) {
     // Kernel check (#44): what the kernel offers XMRig, in plain words.
     const pages = pi.page_kb != null ? `${pi.page_kb} KB memory pages` : "Memory page size unknown";
-    const huge = pi.huge_pages ? `${pi.huge_pages} huge pages reserved` : "no huge pages reserved";
+    const huge = pi.huge_pages == null ? "huge pages unknown" : pi.huge_pages ? `${pi.huge_pages} huge pages reserved` : "no huge pages reserved";
     const detail = pi.huge_pages ? "XMRig can use them for a faster hashrate." : "XMRig runs without huge pages, which is normal on a stock Raspberry Pi kernel.";
     row("kernel", "Kernel memory", text({ level: "", text: `${pages}, ${huge}` },
       `${detail}${pi.thp ? ` Automatic huge pages: ${pi.thp}.` : ""}`));
@@ -1406,8 +1406,16 @@ function setUpPasswordEyes() {
     eye.addEventListener("click", () => show(input.type === "password"));
     // Hidden again whenever its form is sent, so the next person at the screen doesn't see it.
     if (input.form) input.form.addEventListener("submit", () => show(false));
-    input.replaceWith(wrap);
-    wrap.append(input, eye);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) show(false); });
+    // The button sits beside the box's label, not inside it, so screen readers name the box correctly.
+    const label = input.closest("label");
+    if (label) {
+      label.replaceWith(wrap);
+      wrap.append(label, eye);
+    } else {
+      input.replaceWith(wrap);
+      wrap.append(input, eye);
+    }
     show(false);
   }
 }

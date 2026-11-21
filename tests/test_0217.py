@@ -23,12 +23,13 @@ class HostRuleTests(unittest.TestCase):
     def test_local_addresses_allowed(self):
         for host in ("192.0.2.10", "192.0.2.10:8080", "127.0.0.1", "[::1]", "[fe80::1]:8080", "localhost:8080",
                      "hub", "hub:8080", "hub.local", "HUB.LOCAL.", "hub.lan", "hub.home.arpa", "hub.internal",
-                     "hub.tail1234.ts.net", None, ""):
+                     "hub.tail1234.ts.net", "raspberrypi.home", "hub.fritz.box", "hub.attlocal.net", None):
             self.assertTrue(hub.host_allowed(host), host)
 
     def test_other_websites_refused(self):
         for host in ("evil.example", "evil.example:8080", "192.0.2.10.evil.example", "local.evil.example",
-                     "hub.local.evil.example", "[not-an-ip]", "[]", ":8080"):
+                     "hub.local.evil.example", "[not-an-ip]", "[]", ":8080", "", "[::1]evil.com", "[::1]:80:evil",
+                     "hub.local:evil", "evil.com, hub.local", "evil:x:y", "hub\x00.local", "hub.local:99999x"):
             self.assertFalse(hub.host_allowed(host), host)
 
     def test_owner_can_add_names(self):
@@ -37,6 +38,9 @@ class HostRuleTests(unittest.TestCase):
         self.assertTrue(hub.host_allowed("fleet.example.com:8080", extra))
         self.assertFalse(hub.host_allowed("evil.example", extra))
         self.assertEqual(hub.allowed_hosts_setting(None), ())
+        self.assertEqual(hub.allowed_hosts_setting("fleet.example.com:8443, *.trycloudflare.com, bad name, <x>"),
+                         ("fleet.example.com", ".trycloudflare.com"))
+        self.assertIn(hub.socket.gethostname().lower(), hub.own_names())
         tunnel = hub.allowed_hosts_setting(".trycloudflare.com")
         self.assertTrue(hub.host_allowed("calm-river-1234.trycloudflare.com", tunnel))
         self.assertFalse(hub.host_allowed("trycloudflare.com.evil.example", tunnel))
@@ -65,6 +69,7 @@ class HostGuardServerTests(unittest.TestCase):
             status, body = self.call(path, "evil.example")
             self.assertEqual(status, 403, path)
             self.assertIn(b"MINDFUL_FLEET_ALLOWED_HOSTS", body)
+            self.assertIn(b'"evil.example"', body)
         status, _ = self.call("/api/layout", "evil.example", data=b"{}", method="PUT",
                               headers={"Content-Type": "application/json"})
         self.assertEqual(status, 403)
@@ -83,7 +88,7 @@ class HostGuardServerTests(unittest.TestCase):
         status, _ = self.call("/api/report", "hub.example.org", data=json.dumps(report).encode(), method="POST",
                               headers={"Authorization": "Bearer secret", "Content-Type": "application/json"})
         self.assertEqual(status, 200)
-        self.assertEqual(self.call("/healthz", "hub.example.org")[0], 200)
+        self.assertEqual(self.call("/healthz", "hub.example.org")[0], 403)  # The version stays private too.
 
 
 class KernelCheckTests(unittest.TestCase):
@@ -114,8 +119,8 @@ class KernelCheckTests(unittest.TestCase):
         kept = hub.clean_report({**base, "page_kb": 16, "huge_pages": 0, "thp": "never"})
         self.assertEqual((kept["page_kb"], kept["huge_pages"], kept["thp"]), (16, 0, "never"))
         self.assertIsNone(hub.clean_report({**base, "thp": "<b>yes</b>"})["thp"])
-        with self.assertRaises(hub.BadReport):  # Like every other reading, a number out of range refuses the report.
-            hub.clean_report({**base, "page_kb": -4})
+        for bad in (-4, 16.5, "16", True, 1 << 40):
+            self.assertIsNone(hub.clean_report({**base, "page_kb": bad, "huge_pages": bad})["page_kb"], bad)
 
 
 class PasswordEyeTests(unittest.TestCase):
@@ -219,3 +224,24 @@ class PoolTestTests(unittest.TestCase):
         self.assertEqual(self.tools.pool_test("not a pool; rm", say=self.lines.append), 2)
         with unittest.mock.patch.object(self.tools, "xmrig_pool", return_value=None):
             self.assertEqual(self.tools.pool_test(None, say=self.lines.append), 2)
+
+
+class HubInstallerKeepsSettingsTests(unittest.TestCase):
+    """The review's blocking finding: an update rewrote hub.env and erased MINDFUL_FLEET_ALLOWED_HOSTS."""
+
+    def test_extra_lines_survive_a_reinstall(self):
+        import subprocess
+        script = (ROOT / "install" / "install-hub.sh").read_text()
+        block = script[script.index('EXTRA=""'):script.index("chown root:mindful-fleet /etc/mindful-fleet/hub.env")]
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        block = block.replace("/etc/mindful-fleet", str(folder))
+        env = folder / "hub.env"
+        env.write_text("MINDFUL_FLEET_TOKEN=keepme\nMINDFUL_FLEET_PORT=8080\nMINDFUL_FLEET_STATE=/old\n"
+                       "MINDFUL_FLEET_ALLOWED_HOSTS=.trycloudflare.com,fleet.example.com\n")
+        for _ in range(2):
+            subprocess.run(["bash", "-c", "set -euo pipefail; PORT=8080\n" + block], check=True, timeout=30)
+        lines = env.read_text().splitlines()
+        self.assertEqual(lines, ["MINDFUL_FLEET_TOKEN=keepme", "MINDFUL_FLEET_PORT=8080",
+                                 "MINDFUL_FLEET_STATE=/var/lib/mindful-fleet/fleet.json",
+                                 "MINDFUL_FLEET_ALLOWED_HOSTS=.trycloudflare.com,fleet.example.com"])
