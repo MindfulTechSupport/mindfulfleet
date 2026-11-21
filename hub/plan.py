@@ -39,7 +39,7 @@ class Plan:
                 word = self._path.read_text(encoding="utf-8", errors="replace")[:40].strip().lower()
             except OSError:
                 word = "free"
-            self._seen = (stamp, word if word in PLANS else "free")
+            self._seen = (stamp, word if word in PLANS and word != "demo" else "free")  # "demo" is only for --demo.
         return self._seen[1]
 
     def current(self):

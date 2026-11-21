@@ -296,6 +296,10 @@ class ReviewFixTests(unittest.TestCase):
         real = self.store._db
 
         class Failing:
+            @property
+            def in_transaction(self):
+                return real.in_transaction
+
             def execute(self, sql, *args):
                 if sql.startswith("INSERT"):
                     raise hs.sqlite3.OperationalError("database is locked")
@@ -361,6 +365,45 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(self.store._db.execute("SELECT temp FROM snaps WHERE t = ?", (real,)).fetchone(), (50.0,))
         self.assertEqual(row_count(self.store), 3)  # The real snapshot and the two imported ones around it.
 
+    def test_import_is_quick_even_with_months_of_history(self):
+        rows = [[1, hs.FULL, START - DAY + i * 15, 15, 1] + [50.0] + [None] * (len(hs.COLUMNS) - 1) for i in range(5760)]
+        self.store._pi_number(PI, "Three")
+        self.store._db.executemany(hs.SQL_SAVE, rows)
+        saved = {"charts": {"Three": {"times": [START - 2 * DAY + i * 300 for i in range(288)], "values": {"temp": [40.0] * 288}}}}
+        began = time.monotonic()
+        added = self.store.import_saved(saved, {"Three": PI}, now=START)
+        self.assertLess(time.monotonic() - began, 2)
+        self.assertEqual(added, {"Three": 288})  # The day before History had anything.
+
+    def test_a_failed_commit_is_undone(self):
+        calls = []
+
+        class Fake:
+            in_transaction = True
+
+            def execute(self, sql, *args):
+                calls.append(sql)
+                if sql == "COMMIT":
+                    raise hs.sqlite3.OperationalError("disk I/O error")
+
+        with self.assertRaises(hs.sqlite3.OperationalError), hs._transaction(Fake()):
+            pass
+        self.assertEqual(calls, ["BEGIN", "COMMIT", "ROLLBACK"])
+
+    def test_a_long_snapshot_merges_with_a_folded_one_at_the_same_time(self):
+        self.store.set(PI, "Three", enabled=True, every=60)
+        start = hs.bucket_start(START - 100 * DAY, 6 * 3600)
+        for i in range(11):
+            self.store.add(report(temp_c=40.0), start + i * 60)
+        self.store.set(PI, "Three", every=6 * 3600)
+        for i in range(119):
+            self.store.add(report(temp_c=60.0), start + 1000 + i * 60)
+        self.store.flush_now()
+        self.store.tick(START)
+        rolled = self.store._db.execute("SELECT n, temp_lo, temp_hi FROM snaps WHERE tier = ?", (hs.ROLLED,)).fetchall()
+        self.assertEqual(sum(n for n, _, _ in rolled), 130)
+        self.assertEqual((min(r[1] for r in rolled), max(r[2] for r in rolled)), (40.0, 60.0))
+
     def test_huge_numbers_are_bad_requests_not_crashes(self):
         self.assertIsNone(hub._whole(10**400, 0, 10))
         with self.assertRaises(ValueError):
@@ -377,7 +420,8 @@ class PlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "plan"
             self.assertEqual(plans.Plan(path).current(), {"name": "free", "plus": False, "pro": False})
-            for word, expected in (("owner\n", "owner"), ("  PLUS ", "plus"), ("pro", "pro"), ("gold", "free"), ("", "free")):
+            cases = (("owner\n", "owner"), ("  PLUS ", "plus"), ("pro", "pro"), ("gold", "free"), ("demo", "free"), ("", "free"))
+            for word, expected in cases:
                 with self.subTest(word=word):
                     path.write_text(word)
                     self.assertEqual(plans.Plan(path).name(), expected)

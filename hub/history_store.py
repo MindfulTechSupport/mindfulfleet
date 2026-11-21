@@ -43,6 +43,7 @@ MAINTAIN_SECONDS = 3600
 LATE_SECONDS = 20  # A report can arrive a little after its interval ends; wait this long before closing it.
 MIN_WATTS = 0.1  # Below this a board isn't really reporting power, and hashes per watt would be nonsense.
 IMPORT_WINDOW = 26 * 3600  # A saved file holds 24 hours; anything far outside its own day is refused.
+MAX_PENDING = 100_000  # Snapshots kept for another try when a write fails; the oldest go first beyond this.
 MIN_FREE_BYTES = 1024**3  # Stop saving new detail when the hub's disk has less than 1 GB free.
 MAX_MARKERS = 1000
 MARKER_TEXT = 80
@@ -77,10 +78,11 @@ def _transaction(db):
     db.execute("BEGIN")
     try:
         yield
+        db.execute("COMMIT")
     except BaseException:
-        db.execute("ROLLBACK")
+        if db.in_transaction:
+            db.execute("ROLLBACK")
         raise
-    db.execute("COMMIT")
 
 
 def bucket_start(when, span):
@@ -179,7 +181,7 @@ SQL_SERIES_ONE = {  # One reading at a time, so a chart of one reading doesn't c
            f"MIN(COALESCE({name}_lo, {name})), MAX(COALESCE({name}_hi, {name})) "
            "FROM snaps WHERE pi = ? AND t >= ? AND t < ? GROUP BY b ORDER BY b")
     for name in READINGS}
-SQL_OVERLAP = "SELECT 1 FROM snaps WHERE pi = ? AND t < ? AND t + span > ? LIMIT 1"
+SQL_OVERLAP = "SELECT 1 FROM snaps WHERE pi = ? AND tier IN (0, 1) AND t > ? AND t < ? AND t + span > ? LIMIT 1"
 SQL_ONE = "SELECT pi, t, span, n, " + _ROW + " FROM snaps WHERE pi = ? AND tier = ? AND t = ?"
 SQL_COMPARE = "SELECT SUM(span), " + _AVG + " FROM snaps WHERE pi = ? AND t >= ? AND t < ?"
 SQL_PRESENT = ("SELECT " + ", ".join(f"MAX({name} IS NOT NULL)" for name in READINGS) +
@@ -304,7 +306,7 @@ class HistoryStore:
                         for row in rows:
                             self._db.execute(SQL_SAVE, self._merged(row))
                 except BaseException:
-                    self._pending = rows + self._pending  # Kept for the next try.
+                    self._pending = (rows + self._pending)[-MAX_PENDING:]  # Kept for the next try.
                     raise
             if now - self._last_maintain >= MAINTAIN_SECONDS:
                 self._last_maintain = now
@@ -351,12 +353,18 @@ class HistoryStore:
                 groups.setdefault((row[0], bucket_start(row[1], ROLLUP_SECONDS)), []).append(row)
         with _transaction(self._db):
             for (pi, start), rows in groups.items():
+                span = ROLLUP_SECONDS
                 existing = self._db.execute(SQL_ROLLED, (pi, ROLLED, start)).fetchone()
                 if existing:
                     rows.append(existing)
-                self._db.execute(SQL_SAVE, [pi, ROLLED, start, ROLLUP_SECONDS, *_combine(rows)])
+                    span = max(span, existing[2])
+                self._db.execute(SQL_SAVE, [pi, ROLLED, start, span, *_combine(rows)])
             for row in long_ones:
-                self._db.execute(SQL_SAVE, [row[0], ROLLED, row[1], row[2], *row[3:]])
+                existing = self._db.execute(SQL_ROLLED, (row[0], ROLLED, row[1])).fetchone()
+                if existing:  # Never overwrite: merge with what's already folded at that time.
+                    self._db.execute(SQL_SAVE, [row[0], ROLLED, row[1], max(row[2], existing[2]), *_combine([existing, row])])
+                else:
+                    self._db.execute(SQL_SAVE, [row[0], ROLLED, row[1], row[2], *row[3:]])
             self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (FULL, cutoff))
             self._db.execute("DELETE FROM snaps WHERE tier = ? AND t < ?", (ROLLED, now - ROLLUP_DAYS * 86400))
             self._db.execute("DELETE FROM markers WHERE t < ?", (now - ROLLUP_DAYS * 86400,))
@@ -386,20 +394,20 @@ class HistoryStore:
         points = max(10, min(MAX_POINTS, int(points)))
         result = {}
         for pi_id, n in self._numbers(pi_ids).items():
-            with self._read_lock:
+            with self._read_lock, _transaction(self._reader):  # One consistent view across the readings.
                 shortest = self._reader.execute("SELECT MIN(span) FROM snaps WHERE pi = ? AND t >= ? AND t < ?",
                                                 (n, start, end)).fetchone()[0]
                 step = max(int(shortest or 0), math.ceil((end - start) / points))
-                found = {name: self._reader.execute(SQL_SERIES_ONE[name], (start, step, n, start, end)).fetchall()
+                found = {name: {row[0]: row for row in self._reader.execute(SQL_SERIES_ONE[name], (start, step, n, start, end))}
                          for _, name in wanted} if shortest else {}
-            times = [row[0] for row in found[wanted[0][1]]] if found else []
-            out = {"times": [start + b * step for b in times], "step": step if times else 0,
+            buckets = sorted(set().union(*found.values())) if found else []
+            out = {"times": [start + b * step for b in buckets], "step": step if buckets else 0,
                    "values": {}, "low": {}, "high": {}}
             for _, name in wanted:
-                rows = found.get(name, [])
-                out["values"][name] = [_round(row[1]) for row in rows]
-                out["low"][name] = [_round(row[2]) for row in rows]
-                out["high"][name] = [_round(row[3]) for row in rows]
+                rows = found.get(name, {})
+                out["values"][name] = [_round(rows[b][1]) if b in rows else None for b in buckets]
+                out["low"][name] = [_round(rows[b][2]) if b in rows else None for b in buckets]
+                out["high"][name] = [_round(rows[b][3]) if b in rows else None for b in buckets]
             result[pi_id] = out
         return result
 
@@ -527,7 +535,7 @@ class HistoryStore:
                     if not finite(when) or not newest - IMPORT_WINDOW <= when <= newest:
                         continue
                     when = int(when)
-                    if self._db.execute(SQL_OVERLAP, (n, when + 300, when)).fetchone():
+                    if self._db.execute(SQL_OVERLAP, (n, when - MAX_INTERVAL, when + 300, when)).fetchone():
                         continue  # History already has something for these 5 minutes.
                     row = [n, FULL, when, 300, 20]  # 5-minute averages of about 20 reports each.
                     found = False
