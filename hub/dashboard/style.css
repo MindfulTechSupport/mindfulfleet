@@ -332,3 +332,4 @@ code { font-family: ui-monospace, monospace; }
 .password-wrap input { flex: 1; min-width: 0; }
 .eye { display: inline-flex; align-items: center; justify-content: center; padding: 6px; border: 1px solid var(--track); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer; }
 .eye:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.password-wrap label { flex: 1; }

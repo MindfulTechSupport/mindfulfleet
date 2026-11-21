@@ -114,20 +114,19 @@ def allowed_hosts_setting(text):
         name = part.strip().lower()
         name = "." + name[2:] if name.startswith("*.") else name  # *.example.com means the same as .example.com
         name = re.sub(r":\d+$", "", name).rstrip(".")  # A port doesn't matter here.
-        if name and re.fullmatch(r"\.?[a-z0-9-]+(\.[a-z0-9-]+)*", name):
+        # A dot entry needs at least two labels (.example.com), so one entry can't allow a whole .com.
+        if re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)*|\.[a-z0-9-]+(\.[a-z0-9-]+)+", name):
             names.append(name)
     return tuple(names)
 
 
 def own_names():
-    """This computer's own names, which the owner's network already uses for it."""
-    names = set()
-    for get in (socket.gethostname, socket.getfqdn):
-        try:
-            names.add(get().lower().rstrip("."))
-        except OSError:
-            pass
-    return tuple(n for n in names if n)
+    """This computer's own name, which the owner's network already uses for it (no DNS lookup, so start-up never waits)."""
+    try:
+        name = socket.gethostname().lower().rstrip(".")
+    except OSError:
+        return ()
+    return (name,) if name else ()
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
@@ -180,12 +179,15 @@ def _ups(value):
     status = value.get("status")
     if not isinstance(status, str) or not re.fullmatch(r"[A-Z ]{1,40}", status.strip()):
         return None
-    try:
-        return {"name": _text(value.get("name"), 40) or "UPS", "status": status.strip(),
-                "charge": _number(value.get("charge"), 0, 100), "runtime_s": _number(value.get("runtime_s"), 0, 10**7),
-                "load": _number(value.get("load"), 0, 1000)}
-    except BadReport:
-        return None
+    def reading(key, high):
+        # One odd number drops only that number, so a low-battery warning still gets through.
+        try:
+            return _number(value.get(key), 0, high)
+        except BadReport:
+            return None
+
+    return {"name": _text(value.get("name"), 40) or "UPS", "status": status.strip(),
+            "charge": reading("charge", 100), "runtime_s": reading("runtime_s", 10**7), "load": reading("load", 1000)}
 
 
 def _sensors(values):

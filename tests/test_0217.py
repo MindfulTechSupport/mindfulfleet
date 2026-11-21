@@ -168,8 +168,9 @@ class UpsTests(unittest.TestCase):
         base = {"id": "abcdef0123456789", "hostname": "test-pi"}
         kept = hub.clean_report({**base, "ups": {"name": "tripplite", "status": "OL CHRG", "charge": 100, "load": 13}})
         self.assertEqual(kept["ups"]["status"], "OL CHRG")
-        for bad in ({"status": "<script>"}, {"status": "OL", "charge": 400}, "OL", None):
+        for bad in ({"status": "<script>"}, "OL", None):
             self.assertIsNone(hub.clean_report({**base, "ups": bad})["ups"], bad)
+        self.assertIsNone(hub.clean_report({**base, "ups": {"status": "OL", "charge": 400}})["ups"]["charge"])
 
     def test_card_warns_on_battery(self):
         import health
@@ -245,3 +246,48 @@ class HubInstallerKeepsSettingsTests(unittest.TestCase):
         self.assertEqual(lines, ["MINDFUL_FLEET_TOKEN=keepme", "MINDFUL_FLEET_PORT=8080",
                                  "MINDFUL_FLEET_STATE=/var/lib/mindful-fleet/fleet.json",
                                  "MINDFUL_FLEET_ALLOWED_HOSTS=.trycloudflare.com,fleet.example.com"])
+
+
+class SecondReviewTests(unittest.TestCase):
+    """Findings from the second review pass."""
+
+    def test_one_bad_ups_number_keeps_the_low_battery_warning(self):
+        kept = hub.clean_report({"id": "abcdef0123456789", "hostname": "test-pi",
+                                 "ups": {"status": "OB LB", "charge": 101, "runtime_s": -1}})
+        self.assertEqual((kept["ups"]["status"], kept["ups"]["charge"], kept["ups"]["runtime_s"]), ("OB LB", None, None))
+
+    def test_reporter_sends_no_nan(self):
+        done = type("Done", (), {"stdout": "battery.charge: nan\nups.status: OB LB\n", "returncode": 0})()
+        with unittest.mock.patch("shutil.which", return_value="/usr/bin/upsc"):
+            ups = reporter.read_ups(lambda *a, **k: done, "tripplite@localhost")
+        self.assertIsNone(ups["charge"])
+
+    def test_owner_entries_cant_allow_a_whole_top_level_domain(self):
+        self.assertEqual(hub.allowed_hosts_setting(".com, .co.uk, .example.com"), (".co.uk", ".example.com"))
+
+    def test_self_signed_pool_is_still_called_encrypted(self):
+        import socket
+        import ssl
+        sys.path.insert(0, str(ROOT / "tools"))
+        import mindful_fleet_tools as tools
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        self.addCleanup(server.close)
+        threading.Thread(target=lambda: [server.accept()[0].close() for _ in range(2)], daemon=True).start()
+
+        class Refuses:
+            def wrap_socket(self, raw, server_hostname=None):
+                raise ssl.SSLCertVerificationError("self-signed certificate")
+        lines = []
+        with unittest.mock.patch("ssl.create_default_context", return_value=Refuses()):
+            tools.pool_test(f"127.0.0.1:{server.getsockname()[1]}", timeout=2, say=lines.append)
+        self.assertIn("Encrypted, but its certificate can't be checked", lines[-1])
+
+    def test_pool_input_is_cleaned(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import mindful_fleet_tools as tools
+        lines = []
+        self.assertEqual(tools.pool_test("pool.example:0", say=lines.append), 2)
+        self.assertEqual(tools.pool_test("\x1b[2Jpool.example", say=lines.append), 2)
+        self.assertNotIn("\x1b", lines[-1])

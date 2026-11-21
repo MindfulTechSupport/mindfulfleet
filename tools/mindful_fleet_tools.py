@@ -267,9 +267,10 @@ def xmrig_pool(url="http://127.0.0.1:37841/2/summary", timeout=2):
     import urllib.request  # Only this command needs it.
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed local address
-            return (json.load(response).get("connection") or {}).get("pool")
+            pool = (json.load(response).get("connection") or {}).get("pool")
     except (OSError, ValueError, AttributeError):
         return None
+    return pool if isinstance(pool, str) else None
 
 
 def pool_test(target=None, timeout=5, say=print):
@@ -280,8 +281,9 @@ def pool_test(target=None, timeout=5, say=print):
         say("Which pool? For example: mindful-fleet pool-test gulf.moneroocean.stream:20128")
         return 2
     match = POOL_RE.match(target)
-    if not match:
-        say(f"That doesn't look like name:port, such as gulf.moneroocean.stream:20128 ({target[:80]}).")
+    if not match or not 1 <= int(match.group(2)) <= 65535:
+        shown = re.sub(r"[^\x20-\x7e]", "", target)[:80]  # No control codes reach the terminal.
+        say(f"That doesn't look like name:port, such as gulf.moneroocean.stream:20128 ({shown}).")
         return 2
     host, port = match.group(1).strip("[]"), int(match.group(2))
     say(f"Testing {host} port {port}")
@@ -302,6 +304,10 @@ def pool_test(target=None, timeout=5, say=print):
         with socket.create_connection((host, port), timeout=timeout) as raw, \
                 ssl.create_default_context().wrap_socket(raw, server_hostname=host) as secure:
             say(f"✓ Encrypted ({secure.version()}): use this port with --tls in XMRig")
+    except ssl.SSLCertVerificationError:
+        # It spoke TLS, but its certificate couldn't be checked (self-signed, or reached by IP address).
+        say("✓ Encrypted, but its certificate can't be checked from here: --tls still works, and "
+            "--tls-fingerprint pins it")
     except (OSError, ssl.SSLError):
         say("· Not encrypted on this port: use it without --tls, or ask the pool for its TLS port")
     return 0
