@@ -24,7 +24,11 @@
       <h1 id="summary" aria-live="polite">Checking on your fleet…</h1>
       <p id="fleet-power" class="fleet-power" hidden></p>
       <p id="connection" class="connection" role="status" hidden></p>
-      <p id="no-password" class="connection" role="status" hidden>No dashboard password yet, so anyone on your network can open this page. To set one, run <code>sudo mindful-fleet password</code> on the hub.</p>
+      <div id="no-password" class="connection" role="status" hidden>
+        <p>No dashboard password yet, so anyone on your network can open this page. To set one, run <code>sudo mindful-fleet password</code> on the hub.
+          <button id="password-help-button" class="link-button" type="button" aria-expanded="false" aria-controls="password-help">How do I set it?</button></p>
+        <div id="password-help" class="password-help" hidden></div>
+      </div>
       <p id="arrange-help" class="help" hidden>Drag cards to move them, or use the arrows and group menu on each card. Your layout is saved on the hub, so every browser sees it. Sizes stay per browser.</p>
     </div>
     <details id="settings" class="settings" open>
@@ -61,9 +65,21 @@
           <input id="controls" type="range" min="50" max="150" step="1" value="100">
           <span id="controls-value" class="slider-value"></span>
         </label>
-        <label class="size pick price"><span>Electricity $ per kWh</span>
+        <label class="size pick price"><span id="price-label">Electricity price per kWh</span>
           <input id="price" type="number" min="0" max="10" step="0.001" inputmode="decimal" placeholder="0.152">
         </label>
+        <details id="region" class="rows account region">
+          <summary>Region and units</summary>
+          <p class="help">The hub keeps every reading in °C and world time. These only change what the screen shows, in every browser.</p>
+          <label class="size pick"><span>Region</span><select id="region-country"></select></label>
+          <label class="size pick"><span>Units</span><select id="region-units"></select></label>
+          <label class="size pick"><span>Money</span><select id="region-currency"></select></label>
+          <label class="size pick"><span>Dates</span><select id="region-dates"></select></label>
+          <label class="size pick"><span>Clock</span><select id="region-clock"></select></label>
+          <label class="size pick"><span>Time zone</span><select id="region-timezone"></select></label>
+          <label class="size pick"><span>Storage sizes</span><select id="region-sizes"></select></label>
+          <label class="size pick"><span>Network speed</span><select id="region-speed"></select></label>
+        </details>
         <div class="tool-buttons">
           <details class="rows">
             <summary>Choose what cards show</summary>
@@ -107,9 +123,11 @@
     <div id="fleet"></div>
   </main>
   <footer class="foot">
+    <p id="version-bar" class="version-bar" role="status" hidden></p>
     <p>Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. MindfulFleet is an independent project, not made or endorsed by Raspberry Pi Ltd.</p>
   </footer>
   <script src="/palettes.js"></script>
+  <script src="/region.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

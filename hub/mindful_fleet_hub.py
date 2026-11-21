@@ -32,7 +32,7 @@ import plan as plans  # noqa: E402
 import xlsx  # noqa: E402
 from averages import History  # noqa: E402
 
-VERSION = "0.2.15"
+VERSION = "0.2.16"
 DEFAULT_PORT = 8742
 MAX_BODY_BYTES = 16 * 1024
 MAX_PIS = 256
@@ -55,7 +55,19 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/palettes.js": ("palettes.js", "text/javascript; charset=utf-8"),
+    "/region.js": ("region.js", "text/javascript; charset=utf-8"),
 }
+# Region and units (Settings): the same choices as hub/dashboard/region.js. The first one is the default.
+REGION_CHOICES = {
+    "units": ("metric", "imperial"),
+    "dates": ("auto", "mdy", "dmy", "ymd"),
+    "clock": ("auto", "12", "24"),
+    "sizes": ("binary", "decimal"),
+    "speed": ("bytes", "bits"),
+}
+REGION_CURRENCIES = ("USD", "EUR", "GBP", "CAD", "AUD", "NZD", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "JPY",
+                     "CNY", "INR", "BRL", "MXN", "ZAR", "KRW", "SGD", "HKD", "PHP", "ILS", "TRY")
+_TIMEZONE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     "X-Content-Type-Options": "nosniff",
@@ -318,6 +330,19 @@ class Fleet:
             json.dump(layout, f)
         os.replace(f.name, path)
 
+    def settle_region(self):
+        """D-090: a hub upgraded from an older version keeps °C until its owner changes it. Only a brand-new hub
+        (no computers yet) lets the first browser match its own country. Runs once at start-up."""
+        layout = self.load_layout()
+        if not isinstance(layout, dict) or layout.get("region") or not self._pis:
+            return
+        try:
+            settled = clean_layout(layout)
+        except BadReport:
+            settled = clean_layout({})
+        settled["region"] = clean_region({})
+        self.save_layout(settled)
+
     def _layout_path(self):
         return self._state_path.with_name("layout.json") if self._state_path else None
 
@@ -348,7 +373,22 @@ def clean_layout(raw):
     hidden = [h for h in raw.get("hidden", []) if isinstance(h, str) and re.match(r"^[a-z]{1,20}$", h)][:40]
     price = raw.get("price")
     price = price if isinstance(price, (int, float)) and not isinstance(price, bool) and 0 <= price <= 10 else None
-    return {"order": ids, "groups": groups, "members": members, "hidden": hidden, "price": price}
+    return {"order": ids, "groups": groups, "members": members, "hidden": hidden, "price": price,
+            "region": clean_region(raw.get("region"))}
+
+
+def clean_region(raw):
+    """Region and units: known choices only, so a bad value can't reach another browser. None means not set yet."""
+    if not isinstance(raw, dict):
+        return None
+    region = {key: raw.get(key) if raw.get(key) in choices else choices[0] for key, choices in REGION_CHOICES.items()}
+    country = raw.get("country")
+    region["country"] = country if isinstance(country, str) and re.fullmatch(r"[A-Z]{2}", country) else ""
+    currency = raw.get("currency")
+    region["currency"] = currency if currency in REGION_CURRENCIES else "USD"
+    zone = raw.get("timezone")
+    region["timezone"] = zone if isinstance(zone, str) and len(zone) <= 40 and _TIMEZONE_RE.match(zone) else "auto"
+    return region
 
 
 def check_latest_version(fleet, stop, url=RELEASE_VERSION_URL):
@@ -931,6 +971,11 @@ def main(argv=None):
         parser.error("set the MINDFUL_FLEET_TOKEN environment variable, or use --demo")
 
     fleet = Fleet(args.state)
+    if not args.demo:
+        try:
+            fleet.settle_region()
+        except OSError as error:
+            print(f"Couldn't save the units setting: {error}", file=sys.stderr, flush=True)
     stop = threading.Event()
     finder = (lambda known: discover.demo_results()) if args.demo else discover.find_pis
     if args.demo:

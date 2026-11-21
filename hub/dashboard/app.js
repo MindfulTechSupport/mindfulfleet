@@ -18,7 +18,7 @@ const ROWS = [
   ["uptime", "Running for"], ["system", "System"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
-const SHARED_KEYS = ["order", "groups", "members", "hidden", "price"];
+const SHARED_KEYS = ["order", "groups", "members", "hidden", "price", "region"];
 let latestVersion = null;
 let layoutSaveTimer = null;
 
@@ -43,13 +43,16 @@ const chartChoice = {}; // Per computer: which reading its chart shows.
 const FULL_HEIGHT = 1250; // The slider's top end means "fit all", with no scrolling.
 
 const layout = loadLayout();
+// Region and units (region.js): readings arrive as °C, bytes and world time; only what this screen shows changes.
+let fmt = window.MF_REGION.make(layout.region, navigator.language);
+let regionNote = "";
 let arranging = false;
 let dragging = null;
 let latestPis = [];
 let plan = { name: "free", plus: false, pro: false }; // From the hub: which paid features it may use.
 
 function loadLayout() {
-  const empty = { palette: "lavender", mode: "auto", expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null };
+  const empty = { palette: "lavender", mode: "auto", expandAll: false, look: "tall", controls: 100, settingsOpen: true, size: 100, width: 340, height: FULL_HEIGHT, order: [], groups: [], members: {}, hidden: [], price: null, region: null };
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LAYOUT_KEY)) };
   } catch {
@@ -131,10 +134,7 @@ function sparkline(history) {
 }
 
 function bytes(value) {
-  if (value == null) return "";
-  const gb = value / 1024 ** 3;
-  if (gb < 1) return `${Math.round(value / 1024 ** 2)} MB`;
-  return gb >= 100 ? `${gb.toFixed(0)} GB` : `${gb.toFixed(1)} GB`;
+  return fmt.size(value);
 }
 
 function duration(seconds) {
@@ -148,10 +148,7 @@ function duration(seconds) {
 }
 
 function rate(bytesPerSecond) {
-  if (bytesPerSecond == null) return "—";
-  if (bytesPerSecond >= 1024 ** 2) return `${(bytesPerSecond / 1024 ** 2).toFixed(1)} MB/s`;
-  if (bytesPerSecond >= 1024) return `${Math.round(bytesPerSecond / 1024)} KB/s`;
-  return `${bytesPerSecond} B/s`;
+  return fmt.speed(bytesPerSecond);
 }
 
 function ghz(mhz) {
@@ -197,7 +194,7 @@ function hashes(value) {
 function energy(watts) {
   const kwhPerDay = watts * 24 / 1000;
   const perDay = kwhPerDay * (layout.price || 0);
-  const cost = layout.price ? `, $${perDay.toFixed(perDay < 1 ? 3 : 2)} a day` : "";
+  const cost = layout.price ? `, ${fmt.money(perDay, perDay < 1 ? 3 : 2)} a day` : "";
   return `about ${kwhPerDay.toFixed(2)} kWh a day${cost}`;
 }
 
@@ -388,7 +385,7 @@ function cardHead(pi) {
 function issuesList(pi) {
   if (!pi.health.issues.length) return null;
   const list = el("ul", "issues");
-  for (const issue of pi.health.issues) list.appendChild(el("li", issue.level, issue.text));
+  for (const issue of pi.health.issues) list.appendChild(el("li", issue.level, fmt.words(issue.text)));
   return list;
 }
 
@@ -521,7 +518,7 @@ function loadHistory(pi) {
 }
 
 function clockTime(seconds) {
-  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return fmt.time(seconds);
 }
 
 /* One reading over the last 24 hours, as 5-minute averages from the hub. */
@@ -643,7 +640,7 @@ function tallCard(pi, section) {
   const body = el("div", h.online ? "pi-body" : "pi-body stale");
   if (arranging) body.appendChild(arrangeBar(pi, section));
   const heat = el("div", "heat");
-  const temp = h.temp.value == null ? "—" : `${Math.round(h.temp.value)}°C`;
+  const temp = h.temp.value == null ? "—" : `${Math.round(fmt.temp(h.temp.value))}${fmt.tempUnit}`;
   heat.append(el("div", `degrees ${h.temp.level}`, temp));
   if (shown("trend")) heat.appendChild(sparkline(pi.history));
   body.appendChild(heat);
@@ -688,7 +685,8 @@ function keyReadings(pi) {
   const list = [];
   const add = (key, item) => { if (shown(key)) list.push(item); };
   if (h.temp.value != null) {
-    add("trend", { key: "temp", label: "Temperature", value: Math.round(h.temp.value), unit: "°C", percent: h.temp.value / 90 * 100, level: h.temp.level, limit: "warm at 70, hot at 80" });
+    add("trend", { key: "temp", label: "Temperature", value: Math.round(fmt.temp(h.temp.value)), unit: fmt.tempUnit, percent: h.temp.value / 90 * 100, level: h.temp.level,
+      limit: `warm at ${Math.round(fmt.temp(70))}, hot at ${Math.round(fmt.temp(80))}` });
   }
   if (pi.hashrate != null) {
     const best = Math.max(pi.hashrate_max || 0, pi.hashrate);
@@ -759,7 +757,7 @@ function wideRow(pi, section) {
     const cell = el("div", `cell ${item.level || ""}`.trim());
     cell.appendChild(el("span", "cell-label", item.label));
     const value = el("strong", "", `${item.value}`);
-    if (item.unit) value.appendChild(el("small", "", item.unit === "%" || item.unit === "°C" ? item.unit : ` ${item.unit}`));
+    if (item.unit) value.appendChild(el("small", "", item.unit === "%" || item.unit === "°C" || item.unit === "°F" ? item.unit : ` ${item.unit}`));
     cell.appendChild(value);
     if (item.percent != null) {
       const bar = el("div", "bar");
@@ -835,8 +833,16 @@ async function loadSharedLayout() {
     const response = await fetch("/api/layout", { cache: "no-store" });
     if (!response.ok) return;
     const shared = await response.json();
-    if (!shared || !Array.isArray(shared.order)) return;
+    // A hub with no saved layout yet answers {}: that's a brand-new hub, so Region and units can still be matched below.
+    if (!shared || typeof shared !== "object" || Array.isArray(shared)) return;
     for (const key of SHARED_KEYS) if (shared[key]) layout[key] = shared[key];
+    if (!shared.region && !layout.region) {
+      // A brand-new hub: start from this browser's country (D-090). An upgraded hub already keeps °C (settle_region).
+      layout.region = window.MF_REGION.guess(navigator.language);
+      const made = window.MF_REGION.make(layout.region, navigator.language);
+      regionNote = `Units matched to this browser's region: ${made.tempUnit}, ${layout.region.currency}. Change them in Settings → Region and units.`;
+      shareLayout();
+    }
     saveLayout();
   } catch {
     // Keep this browser's own layout.
@@ -1017,7 +1023,8 @@ async function refresh() {
       return;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const { pis, latest_version: latest, password_set: passwordSet, plan: planNow, history: info } = await response.json();
+    const { pis, version: hubVersion, latest_version: latest, password_set: passwordSet, plan: planNow, history: info } = await response.json();
+    showVersion(hubVersion, latest);
     setUpAccount(!!passwordSet);
     if (planNow && planNow.plus !== plan.plus) {
       plan = planNow;
@@ -1185,7 +1192,115 @@ if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change"
 else if (darkQuery && darkQuery.addListener) darkQuery.addListener(applyColors);  // Safari before 14.
 applyColors();  // Right away, so the sign-in page and the first frame already use the chosen colors.
 
+/* Region and units: rebuild the formatter, then the temperature rows that tables and charts read. */
+function useRegion() {
+  fmt = window.MF_REGION.make(layout.region, navigator.language);
+  const temp = (v) => fmt.number(fmt.temp(v), 1);
+  for (const list of [HISTORY_METRICS, VIEW_METRICS]) {
+    const row = list.find(([key]) => key === "temp");
+    row[2] = fmt.tempUnit;
+    row[3] = temp;
+  }
+  const average = AVERAGE_ROWS.find(([key]) => key === "temp");
+  average[1] = `Temp ${fmt.tempUnit}`;
+  average[2] = (v) => Math.round(fmt.temp(v));
+  const bits = fmt.region.speed === "bits";
+  for (const [key, words] of [["net_in", "Net in"], ["net_out", "Net out"]]) {
+    const row = AVERAGE_ROWS.find(([k]) => k === key);
+    row[1] = `${words} ${bits ? "kbps" : "KB/s"}`;
+    row[2] = bits ? (v) => Math.round(v * 8 / 1000) : (v) => Math.round(v / 1024);
+  }
+  document.getElementById("price-label").textContent = `Electricity price per kWh (${fmt.region.currency})`;
+}
+
+function countryName(code) {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code);
+  } catch {
+    return code;
+  }
+}
+
+function setUpRegion() {
+  const R = window.MF_REGION;
+  const picks = {
+    country: [["", `Match this browser (${countryName(R.countryOf(navigator.language)) || "unknown"})`],
+      ...[...new Set([...Object.keys(R.CURRENCY_OF), ...R.EURO, ...R.FAHRENHEIT])]
+        .map((code) => [code, countryName(code)]).sort((a, b) => a[1].localeCompare(b[1]))],
+    units: [["metric", "Metric (°C)"], ["imperial", "Imperial (°F)"]],
+    currency: R.CURRENCIES.map((code) => [code, code]),
+    dates: [["auto", "Like my region"], ["mdy", "Nov 21, 2026"], ["dmy", "21 Nov 2026"], ["ymd", "2026-11-21"]],
+    clock: [["auto", "Like my region"], ["12", "12-hour (2:30 PM)"], ["24", "24-hour (14:30)"]],
+    timezone: [["auto", `This browser's (${Intl.DateTimeFormat().resolvedOptions().timeZone})`],
+      ...(Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []).map((zone) => [zone, zone])],
+    sizes: [["binary", "Like Linux tools (1 GB = 1,024 MB)"], ["decimal", "Like the box (1 GB = 1,000 MB)"]],
+    speed: [["bytes", "MB/s (bytes)"], ["bits", "Mbps (bits)"]],
+  };
+  const show = () => {
+    const region = R.clean(layout.region);
+    for (const key of Object.keys(picks)) document.getElementById(`region-${key}`).value = region[key];
+  };
+  for (const [key, options] of Object.entries(picks)) {
+    const select = document.getElementById(`region-${key}`);
+    for (const [value, label] of options) {
+      const option = el("option", "", label);
+      option.value = value;
+      select.appendChild(option);
+    }
+    select.addEventListener("change", () => {
+      const region = R.clean(layout.region);
+      // A new country brings its own units and money; the clock, dates, time zone and sizes stay as chosen.
+      layout.region = key === "country"
+        ? R.clean({ ...region, ...(select.value ? R.forCountry(select.value) : R.guess(navigator.language)), country: select.value,
+          dates: region.dates, clock: region.clock, timezone: region.timezone, sizes: region.sizes, speed: region.speed })
+        : R.clean({ ...region, [key]: select.value });
+      show();
+      useRegion();
+      commit();
+    });
+  }
+  show();
+}
+
+function showVersion(version, latest) {
+  const bar = document.getElementById("version-bar");
+  if (!version) return;
+  bar.textContent = !latest ? `MindfulFleet ${version}`
+    : versionBelow(version, latest) ? `MindfulFleet ${version} · ${latest} is available. Each computer installs it at its next update check, or run sudo mindful-fleet update on it.`
+      : `MindfulFleet ${version} · Up to date`;
+  bar.hidden = false;
+}
+
+/* "How do I set it?" on the no-password banner: the steps, with this hub's address filled in (D-082 part 1). */
+function setUpPasswordHelp() {
+  const help = document.getElementById("password-help");
+  const host = window.location.hostname || "the hub's address";
+  const step = (words, code) => {
+    const item = el("li", "", words);
+    if (code) item.appendChild(el("code", "", code));
+    return item;
+  };
+  const windows = el("ol");
+  windows.append(
+    step("Press the Start button, type PowerShell and open it."),
+    step("Type this, with YOUR-NAME changed to the name you sign in to the hub with, then press Enter: ", `ssh YOUR-NAME@${host}`),
+    step("Type the hub's sign-in password. Nothing shows while you type; that's normal. Press Enter."),
+    step("Type this and press Enter: ", "sudo mindful-fleet password"),
+    step("Choose a dashboard password of at least 10 characters, and type it twice."),
+    step("Come back to this page and reload it. It asks for the new password."));
+  help.append(el("p", "", "On a Windows computer:"), windows,
+    el("p", "", "On a Mac: open Terminal (press Command and Space, type Terminal), then do steps 2 to 6."),
+    el("p", "", "At the hub itself, with a keyboard and screen: open Terminal, then do steps 4 to 6."));
+  const toggle = document.getElementById("password-help-button");
+  toggle.addEventListener("click", () => {
+    help.hidden = !help.hidden;
+    toggle.setAttribute("aria-expanded", String(!help.hidden));
+  });
+}
+
 function setUpTools() {
+  useRegion();
+  setUpRegion();
   setUpRowPicker();
   setUpColors();
   setUpHistory();
@@ -1448,11 +1563,13 @@ function start() {
   void loadSharedLayout().finally(() => {
     setUpTools();
     keepRefreshing();
+    if (regionNote) toast(regionNote);
   });
 }
 
 async function begin() {
   setUpSignIn();
+  setUpPasswordHelp();
   let status = { password_set: false, signed_in: true };
   try {
     const response = await fetch("/api/auth", { cache: "no-store" });
@@ -1643,8 +1760,7 @@ function nameOf(id) {
 }
 
 function dateWords(seconds, withTime) {
-  const options = withTime ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", year: "numeric" };
-  return new Date(seconds * 1000).toLocaleString([], options);
+  return fmt.date(seconds, withTime);
 }
 
 async function loadHistoryView() {
@@ -1820,7 +1936,8 @@ function compareBox() {
     if (before != null && after != null) {
       const diff = after - before;
       const sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
-      change = `${sign}${format(Math.abs(diff))} ${unit}`.trim();
+      // A temperature difference converts without the +32: 20 °C cooler is 36 °F cooler.
+      change = key === "temp" ? `${sign}${fmt.number(fmt.tempChange(Math.abs(diff)), 1)} ${unit}` : `${sign}${format(Math.abs(diff))} ${unit}`.trim();
       if (Math.abs(before) > 1e-9 && ["hashrate", "per_watt", "watts", "fan"].includes(key)) change += ` (${sign}${Math.abs(diff / before * 100).toFixed(1)}%)`;
     }
     row.appendChild(el("td", "", change));

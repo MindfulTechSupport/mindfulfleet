@@ -303,3 +303,14 @@ code { font-family: ui-monospace, monospace; }
 .compare-table th, .compare-table td { text-align: left; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--track); }
 .button-link { display: inline-flex; align-items: center; font-weight: 700; color: var(--card); background: var(--neutral); border-radius: 10px; padding: 6px 14px; min-height: 36px; text-decoration: none; width: fit-content; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--card); padding: 10px 16px; border-radius: 10px; max-width: min(90vw, 60ch); z-index: 20; font-weight: 600; }
+
+/* Region and units, the version bar and the password help (0.2.16). */
+.region .size.pick { display: flex; justify-content: space-between; gap: 8px; }
+.region select { max-width: 60%; }
+.version-bar { margin-bottom: 8px; font-weight: 600; }
+.link-button { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.password-help { margin-top: 8px; }
+.password-help ol { margin: 4px 0 8px; padding-left: 22px; }
+.password-help code { display: inline-block; margin-left: 4px; }
+#no-password p { margin: 0; }
+.password-help { font-weight: 400; }

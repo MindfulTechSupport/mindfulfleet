@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.16 (2026-11-21)
+
+- Settings → Region and units: Metric (°C) or Imperial (°F) for every temperature on the cards, gauges, charts, History, Before and after and the warnings; the money used for the electricity cost; how dates look (Nov 21, 2026 · 21 Nov 2026 · 2026-11-21); a 12- or 24-hour clock; the time zone; storage sizes counted like Linux tools (1 GB = 1,024 MB) or like the box (1,000 MB); network speed in MB/s or Mbps. Picking a region fills in its usual choices, and each one can still be changed. The hub keeps every reading in °C and world time, so History stays correct whatever you pick, and every browser sees the same choices.
+- A brand-new hub starts from the first browser's region (a US browser gets °F and US dollars) and says so once. A hub updated from an earlier version keeps °C until you change it.
+- A temperature difference converts without the +32: "20 °C cooler" shows as "36 °F cooler".
+- The "No dashboard password yet" banner has a "How do I set it?" button with the steps for Windows, a Mac, or a keyboard on the hub, with this hub's address filled in.
+- The bottom of the dashboard shows this hub's version and whether a newer one is out.
+- Cards no longer say "Update available" when they already run the newest version (the reporter's version number now moves with every release).
+
 ## 0.2.15 (2026-11-20)
 
 - History (MindfulFleet Plus): a History on/off switch at the top of each card, with how often to save a snapshot (15 seconds to 1 day, or Custom). Each snapshot keeps the average, low and high of every reading. Every snapshot is kept for 90 days, then one per 3 hours for 3 years, on the hub only.

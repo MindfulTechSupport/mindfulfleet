@@ -360,7 +360,8 @@ class HubTests(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/api/layout") as response:
             saved = json.load(response)
         self.assertEqual(saved, {"order": ["abcdef01"], "groups": [{"id": "gabc", "name": "Miners"}],
-                                 "members": {"abcdef01": "gabc"}, "hidden": ["swap"], "price": None})
+                                 "members": {"abcdef01": "gabc"}, "hidden": ["swap"], "price": None,
+                                 "region": None})
         self.assertEqual(put(layout, "text/plain"), 404)
         self.assertEqual(put([1]), 400)
 
@@ -403,7 +404,7 @@ class HubTests(unittest.TestCase):
         self.assertEqual(self.fleet_json()["pis"][0]["health"]["status"], "ok")
 
     def test_dashboard_files_served_with_security_headers(self):
-        for path in ("/", "/app.js", "/style.css", "/palettes.js"):
+        for path in ("/", "/app.js", "/style.css", "/palettes.js", "/region.js"):
             with urllib.request.urlopen(self.base + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
