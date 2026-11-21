@@ -8,6 +8,12 @@
 - The "No dashboard password yet" banner has a "How do I set it?" button with the steps for Windows, a Mac, or a keyboard on the hub, with this hub's address filled in.
 - The bottom of the dashboard shows this hub's version and whether a newer one is out.
 - Cards no longer say "Update available" when they already run the newest version (the reporter's version number now moves with every release).
+- Two new looks in Settings → Look: Side by side (one column per computer, one row per reading) and One row each (one row per computer). They follow "Choose what cards show". Arrange cards switches back to cards while you arrange.
+- Each card has a Connect row with its SSH command and a Copy button (on a plain http page the button selects the command for Ctrl+C instead).
+- Cooling advice under the fleet summary when one computer runs 10 °C (18 °F) or more warmer than another, with what usually helps.
+- Low-voltage readings name the right power supply: the official 27 W (5.1 V, 5 A) for a Pi 5, or 15 W (5.1 V, 3 A) for a Pi 4, and a short, thick cable.
+- Settings → Cheat sheet: every `mindful-fleet` command in one place, with how to paste into a terminal.
+- The code checker also runs every test on Arm, the Pis' own kind of chip, and runs the dashboard's unit conversions with Node.
 
 ## 0.2.15 (2026-11-20)
 

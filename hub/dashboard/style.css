@@ -314,3 +314,15 @@ code { font-family: ui-monospace, monospace; }
 .password-help code { display: inline-block; margin-left: 4px; }
 #no-password p { margin: 0; }
 .password-help { font-weight: 400; }
+
+/* Side by side and One row each (#61), the Connect row (#65) and the cheat sheet (#55). */
+.fleet .side-wrap { grid-column: 1 / -1; overflow-x: auto; }
+.side-table { border-collapse: collapse; background: var(--card); color: var(--ink); border-radius: 12px; min-width: 100%; }
+.side-table th, .side-table td { padding: 6px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--track); }
+.side-table td.ok { color: var(--ok); }
+.side-table td.warn { color: var(--warn); }
+.side-table td.bad { color: var(--bad); }
+.side-table td.offline { color: var(--off); }
+.connect code { margin-right: 8px; }
+.cheat dt { margin-top: 10px; font-weight: 600; }
+.cheat dd { margin: 2px 0 0; }

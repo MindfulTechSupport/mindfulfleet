@@ -163,3 +163,31 @@ class DashboardConversionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatchTests(unittest.TestCase):
+    """0.2.16's screen-only batch (D-094): Side by side (#61), Connect (#65), power advice (#46), cooling (#45), cheat sheet (#55)."""
+
+    def setUp(self):
+        self.app = (ROOT / "hub" / "dashboard" / "app.js").read_text()
+        self.page = (ROOT / "hub" / "dashboard" / "index.html").read_text()
+
+    def test_new_looks_and_rows(self):
+        self.assertIn('["side", "Side by side"], ["table", "One row each"]', self.app)
+        self.assertIn('["connect", "Connect (SSH)"]', self.app)
+        self.assertIn("grid.replaceChildren(compareTable(pis))", self.app)
+
+    def test_power_advice_names_the_official_supplies(self):
+        self.assertIn("official 27 W supply (5.1 V, 5 A)", self.app)
+        self.assertIn("official 15 W supply (5.1 V, 3 A)", self.app)
+
+    def test_cooling_gap_uses_a_difference_not_a_temperature(self):
+        advice = self.app[self.app.index("function coolingAdvice("):self.app.index("function sshBox(")]
+        self.assertIn("fmt.tempChange(gap)", advice)
+        self.assertNotIn("fmt.temp(gap)", advice)
+
+    def test_cheat_sheet_matches_the_command(self):
+        command = (ROOT / "install" / "mindful-fleet").read_text()
+        for word in ("status", "update", "hold", "resume", "skip", "every", "xmrig", "password", "tidy", "wifi-watchdog", "plan"):
+            self.assertIn(f"  {word})", command, word)
+            self.assertIn(f"mindful-fleet {word}" if word in ("status", "update", "xmrig", "password", "tidy") else word, self.page)

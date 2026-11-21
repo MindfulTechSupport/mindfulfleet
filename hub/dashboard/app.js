@@ -15,14 +15,14 @@ const ROWS = [
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
   ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["sensor", "Power sensors"],
   ["history", "24-hour chart"], ["averages", "Averages"],
-  ["uptime", "Running for"], ["system", "System"],
+  ["uptime", "Running for"], ["system", "System"], ["connect", "Connect (SSH)"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
 const SHARED_KEYS = ["order", "groups", "members", "hidden", "price", "region"];
 let latestVersion = null;
 let layoutSaveTimer = null;
 
-const LOOKS = [["tall", "Tall"], ["wide", "Wide"], ["gauges", "Gauges"]];
+const LOOKS = [["tall", "Tall"], ["wide", "Wide"], ["gauges", "Gauges"], ["side", "Side by side"], ["table", "One row each"]];
 const POWER_SCALE_WATTS = 12; // About the most a busy Pi 5 board draws, so the dial has room.
 const PER_WATT_SCALE = 120; // Hashes per watt. A well-tuned Pi 5 lands near 90, so the dial has room.
 const expanded = new Set(); // Cards opened one by one, in this browser only.
@@ -409,7 +409,9 @@ function readings(pi) {
   row("power", "Power", text(h.power));
   if (h.power.volts != null) {
     const position = (h.power.volts - LOW_VOLTS) / (HIGH_VOLTS - LOW_VOLTS) * 100;
-    row("power", "Input voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`, `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects`));
+    const advice = h.power.level === "ok" ? "" : powerAdvice(pi.model);
+    row("power", "Input voltage", meter(position, "", `${h.power.volts.toFixed(2)} V`,
+      `${Math.round(h.power.volts / NOMINAL_VOLTS * 100)}% of the 5 V a Pi expects${advice ? `. ${advice}` : ""}`));
   }
   if (pi.core_volts != null) row("power", "Core voltage", el("dd", "", `${pi.core_volts.toFixed(3)} V`));
   if (pi.hashrate != null) {
@@ -489,6 +491,7 @@ function readings(pi) {
     }
     row("system", "System", system);
   }
+  if (pi.ip) row("connect", "Connect", sshBox(pi.ip));
   const parts = [facts];
   if (pi.cpu_per_core.length && shown("cores")) parts.push(coreGrid(pi));
   if (shown("history")) parts.push(historyChart(pi));
@@ -929,7 +932,8 @@ function section(group, pis, index) {
   grid.style.fontSize = `${layout.size}%`;
   if (layout.look === "wide") grid.classList.add("rows");
   grid.style.setProperty("--card-width", `${layout.width}px`);
-  grid.replaceChildren(...pis.map((pi) => card(pi, pis)));
+  if ((layout.look === "side" || layout.look === "table") && !arranging) grid.replaceChildren(compareTable(pis));
+  else grid.replaceChildren(...pis.map((pi) => card(pi, pis)));
   if (arranging) {
     grid.classList.add("drop-zone");
     if (!pis.length) grid.appendChild(el("p", "drop-note", "Drop a card here"));
@@ -969,8 +973,97 @@ function showFleetPower() {
     const extra = sensed.reduce((sum, s) => sum + s.watts, 0);
     parts.push(`Power sensors: ${extra.toFixed(1)} W more from ${sensed.length} sensor${sensed.length === 1 ? "" : "s"}.`);
   }
+  const cooling = coolingAdvice(online);
+  if (cooling) parts.push(cooling);
   line.hidden = !parts.length;
   line.textContent = parts.join(" ");
+}
+
+/* Power-supply advice for low voltage (#46): the official supply for the board, and a short cable. */
+function powerAdvice(model) {
+  if (/Pi 5/.test(model || "")) return "A Pi 5 wants the official 27 W supply (5.1 V, 5 A) and a short, thick cable";
+  if (/Pi 4/.test(model || "")) return "A Pi 4 wants the official 15 W supply (5.1 V, 3 A) and a short, thick cable";
+  return "Try the board's official power supply and a short, thick cable";
+}
+
+/* Cooling advisor (#45): compares the warmest and coolest computers and says what usually helps. */
+function coolingAdvice(online) {
+  const warm = online.filter((pi) => pi.temp_c != null);
+  if (warm.length < 2) return "";
+  const hot = warm.reduce((a, b) => (b.temp_c > a.temp_c ? b : a));
+  const cool = warm.reduce((a, b) => (b.temp_c < a.temp_c ? b : a));
+  const gap = hot.temp_c - cool.temp_c;
+  if (gap < 10) return "";
+  const words = `Cooling: ${hot.hostname} runs ${Math.round(fmt.tempChange(gap))}${fmt.tempUnit} warmer than ${cool.hostname}`;
+  if (!hot.fan_rpm && cool.fan_rpm) return `${words}. ${cool.hostname} has a working fan and ${hot.hostname} doesn't: a fan or a bigger cooler usually closes most of that gap.`;
+  if (hot.health.fan.percent != null && hot.health.fan.percent >= 90) return `${words}, with its fan already at full effort. Check the airflow around it, its spot in the rack, or a bigger cooler.`;
+  return `${words}. Check its cooler, its fan and the airflow around it.`;
+}
+
+/* "Connect" row (#65 part 1): the SSH command for this computer, ready to copy. */
+function sshBox(ip) {
+  const command = `ssh ${ip}`;
+  const box = el("dd", "connect");
+  const code = el("code", "", command);
+  const copy = button("Copy", `Copy ${command}`, () => {
+    const done = () => { copy.textContent = "Copied"; setTimeout(() => { copy.textContent = "Copy"; }, 2000); };
+    const select = () => {
+      // Plain http pages can't use the clipboard, so select the command for Ctrl+C instead.
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      copy.textContent = "Press Ctrl+C";
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(command).then(done, select);
+    else select();
+  });
+  box.append(code, copy, el("small", "detail", "Uses this computer's sign-in name. If the Pi's is different, type it and @ before the address."));
+  return box;
+}
+
+/* Side by side (#61): one column per computer and one row per reading, or one row per computer ("One row each"). */
+function compareTable(pis) {
+  const lists = pis.map((pi) => [pi, new Map(keyReadings(pi).map((item) => [item.key, item]))]);
+  const readingsSeen = [];
+  for (const [, items] of lists) {
+    for (const [key, item] of items) if (!readingsSeen.some(([k]) => k === key)) readingsSeen.push([key, item.label]);
+  }
+  const value = (item) => {
+    if (!item) return el("td", "", "—");
+    const unit = ["%", "°C", "°F"].includes(item.unit) ? item.unit : ` ${item.unit}`;
+    return el("td", item.level || "", `${item.value}${unit}`);
+  };
+  const status = (pi) => el("td", pi.health.status, MOODS[pi.health.status]);
+  const table = el("table", "side-table");
+  const head = el("tr");
+  if (layout.look === "side") {
+    head.appendChild(el("th", "", ""));
+    for (const [pi] of lists) head.appendChild(el("th", "", pi.hostname));
+    table.appendChild(head);
+    const statusRow = el("tr");
+    statusRow.appendChild(el("th", "", "How it's doing"));
+    for (const [pi] of lists) statusRow.appendChild(status(pi));
+    table.appendChild(statusRow);
+    for (const [key, label] of readingsSeen) {
+      const row = el("tr");
+      row.appendChild(el("th", "", label));
+      for (const [, items] of lists) row.appendChild(value(items.get(key)));
+      table.appendChild(row);
+    }
+  } else {
+    for (const words of ["Computer", "How it's doing", ...readingsSeen.map(([, label]) => label)]) head.appendChild(el("th", "", words));
+    table.appendChild(head);
+    for (const [pi, items] of lists) {
+      const row = el("tr");
+      row.append(el("th", "", pi.hostname), status(pi));
+      for (const [key] of readingsSeen) row.appendChild(value(items.get(key)));
+      table.appendChild(row);
+    }
+  }
+  const wrap = el("div", "side-wrap");
+  wrap.appendChild(table);
+  return wrap;
 }
 
 function render() {

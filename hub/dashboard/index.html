@@ -106,6 +106,21 @@
           <p id="find-pis-message" class="auth-message" role="status" aria-live="polite"></p>
           <ul id="find-pis-list" class="find-pis-list"></ul>
         </details>
+        <details id="cheat-sheet" class="rows account cheat-sheet">
+          <summary>Cheat sheet</summary>
+          <p class="help">Type these on a Pi, in its own terminal or over SSH (the Connect row on its card has the command). To paste into a terminal: Ctrl+Shift+V on the Pi, Ctrl+V in Windows PowerShell, Command+V on a Mac.</p>
+          <dl class="cheat">
+            <dt><code>mindful-fleet status</code></dt><dd>The version installed, the newest one, and the update setting.</dd>
+            <dt><code>sudo mindful-fleet update</code></dt><dd>Update this computer now.</dd>
+            <dt><code>sudo mindful-fleet hold</code> · <code>resume</code> · <code>skip</code></dt><dd>Pause automatic updates, turn them back on, or skip the newest version.</dd>
+            <dt><code>sudo mindful-fleet every hourly</code> (or <code>6h</code>, <code>daily</code>, <code>weekly</code>)</dt><dd>How often this computer checks for updates.</dd>
+            <dt><code>sudo mindful-fleet xmrig</code></dt><dd>Turn on XMRig's read-only API so the dashboard shows hashrate.</dd>
+            <dt><code>sudo mindful-fleet password</code></dt><dd>On the hub: choose or change the dashboard password.</dd>
+            <dt><code>sudo mindful-fleet tidy</code></dt><dd>Free up space. It shows what it would clear and asks first.</dd>
+            <dt><code>sudo mindful-fleet wifi-watchdog on</code> (or <code>off</code>, <code>status</code>)</dt><dd>Reconnect Wi-Fi by itself when this Pi loses the router.</dd>
+            <dt><code>sudo mindful-fleet plan owner</code> (or <code>free</code>, <code>status</code>)</dt><dd>On the hub: turn the paid features on for your own fleet.</dd>
+          </dl>
+        </details>
         <form id="new-group" class="new-group" hidden>
           <input id="group-name" type="text" maxlength="40" placeholder="New group name" aria-label="New group name">
           <button type="submit">Add group</button>

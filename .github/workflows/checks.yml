@@ -23,16 +23,20 @@ concurrency:
 
 jobs:
   tests:
-    name: Tests - Python ${{ matrix.python }} (${{ matrix.os }})
-    runs-on: ubuntu-latest
+    name: Tests - Python ${{ matrix.python }} (${{ matrix.os }}${{ matrix.suffix }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
           # The Python each Raspberry Pi OS ships: 12 (Bookworm) and 13 (Trixie).
-          - { python: "3.11", os: "Bookworm", image: "python:3.11-slim-bookworm" }
-          - { python: "3.13", os: "Trixie", image: "python:3.13-slim-trixie" }
+          # Each on Intel/AMD and on Arm, the Pis' own kind of chip (GitHub's Arm runners are free for public repos).
+          # The Intel/AMD job names stay as they were, because the release rule asks for them by name.
+          - { python: "3.11", os: "Bookworm", image: "python:3.11-slim-bookworm", runner: ubuntu-latest, suffix: "" }
+          - { python: "3.13", os: "Trixie", image: "python:3.13-slim-trixie", runner: ubuntu-latest, suffix: "" }
+          - { python: "3.11", os: "Bookworm", image: "python:3.11-slim-bookworm", runner: ubuntu-24.04-arm, suffix: ", Arm" }
+          - { python: "3.13", os: "Trixie", image: "python:3.13-slim-trixie", runner: ubuntu-24.04-arm, suffix: ", Arm" }
     container:
       image: ${{ matrix.image }}
     steps:
@@ -59,6 +63,9 @@ jobs:
       - name: Dashboard mistakes and safety (ESLint, rules in eslint.config.mjs)
         if: ${{ always() }}
         run: npx --yes --ignore-scripts eslint@10.1.0 hub/dashboard
+      - name: Dashboard conversions with Node (Region and units, tests/test_region.py)
+        if: ${{ always() }}
+        run: python3 -B -m unittest tests.test_region -v
 
   secrets:
     name: Security - leaked passwords and keys (Gitleaks)
