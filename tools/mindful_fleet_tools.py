@@ -259,17 +259,68 @@ def wifi_check(now=None, route_file="/proc/net/route", net_dir=NET_DIR):
         run(["systemctl", "reboot"])
 
 
+POOL_RE = re.compile(r"^(?:stratum\+(?:tcp|ssl)://)?([A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]+\]):(\d{1,5})$")
+
+
+def xmrig_pool(url="http://127.0.0.1:37841/2/summary", timeout=2):
+    """The pool this Pi's XMRig uses, from its read-only API (the one `mindful-fleet xmrig` turns on)."""
+    import urllib.request  # Only this command needs it.
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - fixed local address
+            return (json.load(response).get("connection") or {}).get("pool")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def pool_test(target=None, timeout=5, say=print):
+    """Pool connection test (#36): does the name resolve, does the port answer, does it speak TLS? Changes nothing."""
+    import ssl  # Only this command needs it.
+    target = (target or "").strip() or xmrig_pool()
+    if not target:
+        say("Which pool? For example: mindful-fleet pool-test gulf.moneroocean.stream:20128")
+        return 2
+    match = POOL_RE.match(target)
+    if not match:
+        say(f"That doesn't look like name:port, such as gulf.moneroocean.stream:20128 ({target[:80]}).")
+        return 2
+    host, port = match.group(1).strip("[]"), int(match.group(2))
+    say(f"Testing {host} port {port}")
+    try:
+        found = sorted({info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)})
+    except (socket.gaierror, UnicodeError):
+        say("✗ The name doesn't resolve. Check the spelling, or this Pi's DNS (try: getent hosts " + host + ").")
+        return 1
+    say(f"✓ The name resolves to {', '.join(found[:4])}")
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except OSError:
+        say(f"✗ Nothing answers on port {port}. The port may be wrong, the pool may be down, or this network blocks it.")
+        return 1
+    say(f"✓ The pool answers on port {port}")
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw, \
+                ssl.create_default_context().wrap_socket(raw, server_hostname=host) as secure:
+            say(f"✓ Encrypted ({secure.version()}): use this port with --tls in XMRig")
+    except (OSError, ssl.SSLError):
+        say("· Not encrypted on this port: use it without --tls, or ask the pool for its TLS port")
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     command = argv[0] if argv else ""
     if command == "wifi-ready":
         return wifi_ready()
+    if command == "pool-test":
+        return pool_test(argv[1] if len(argv) > 1 else None)
     commands = {"tidy": lambda: tidy(yes=True if "--yes" in argv else None), "tidy-undo": tidy_undo,
                 "wifi-check": wifi_check}
     if command in commands:
         commands[command]()
         return 0
-    print("Usage: mindful_fleet_tools.py tidy [--yes] | tidy-undo | wifi-check | wifi-ready", file=sys.stderr)
+    print("Usage: mindful_fleet_tools.py tidy [--yes] | tidy-undo | wifi-check | wifi-ready | pool-test [pool:port]",
+          file=sys.stderr)
     return 2
 
 

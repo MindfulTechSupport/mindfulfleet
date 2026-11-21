@@ -12,6 +12,7 @@
 #   mindful-fleet tidy           free up space (asks first); 'tidy undo' removes the log cap it can add
 #   mindful-fleet wifi-watchdog on|off|status   reconnect Wi-Fi by itself when this Pi loses the router
 #   mindful-fleet plan owner|free|status       turn the paid features (History) on for the owner's own hub
+#   mindful-fleet pool-test [pool:port]        check the mining pool answers from this Pi (changes nothing)
 set -euo pipefail
 
 REPO="MindfulTechSupport/mindfulfleet"
@@ -119,6 +120,11 @@ case "${1:-status}" in
         ;;
       *) echo "Usage: sudo mindful-fleet plan owner | free | status" >&2; exit 1 ;;
     esac
+    ;;
+  pool-test)
+    TOOLS=/opt/mindful-fleet/tools/mindful_fleet_tools.py
+    [[ -f "$TOOLS" ]] || { echo "Update MindfulFleet first: sudo mindful-fleet update" >&2; exit 1; }
+    python3 "$TOOLS" pool-test "${2:-}"
     ;;
   tidy)
     need_root

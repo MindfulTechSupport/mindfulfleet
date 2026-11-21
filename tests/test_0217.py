@@ -174,3 +174,48 @@ class UpsTests(unittest.TestCase):
         low = health.assess({"ups": {"status": "OB LB", "charge": 9}}, 1)
         self.assertEqual(low["status"], "bad")
         self.assertEqual(health.assess({"ups": {"status": "OL CHRG"}}, 1)["status"], "ok")
+
+
+class PoolTestTests(unittest.TestCase):
+    """Pool connection test (#36): a local listener stands in for the pool."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import mindful_fleet_tools
+        self.tools = mindful_fleet_tools
+        self.lines = []
+
+    def test_plain_port_answers_without_tls(self):
+        import socket
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        self.addCleanup(server.close)
+
+        def accept():
+            for _ in range(2):
+                try:
+                    conn, _ = server.accept()
+                    conn.close()
+                except OSError:
+                    return
+        threading.Thread(target=accept, daemon=True).start()
+        port = server.getsockname()[1]
+        self.assertEqual(self.tools.pool_test(f"127.0.0.1:{port}", timeout=2, say=self.lines.append), 0)
+        self.assertIn("✓ The pool answers", "\n".join(self.lines))
+        self.assertIn("Not encrypted", "\n".join(self.lines))
+
+    def test_closed_port_and_bad_names(self):
+        import socket
+        spare = socket.socket()
+        spare.bind(("127.0.0.1", 0))
+        port = spare.getsockname()[1]
+        spare.close()
+        self.assertEqual(self.tools.pool_test(f"127.0.0.1:{port}", timeout=1, say=self.lines.append), 1)
+        self.assertIn("Nothing answers", self.lines[-1])
+        with unittest.mock.patch("socket.getaddrinfo", side_effect=socket.gaierror):
+            self.assertEqual(self.tools.pool_test("no-such-pool.example:3333", say=self.lines.append), 1)
+        self.assertIn("doesn't resolve", self.lines[-1])
+        self.assertEqual(self.tools.pool_test("not a pool; rm", say=self.lines.append), 2)
+        with unittest.mock.patch.object(self.tools, "xmrig_pool", return_value=None):
+            self.assertEqual(self.tools.pool_test(None, say=self.lines.append), 2)
