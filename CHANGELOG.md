@@ -4,6 +4,7 @@
 
 - Every password box has an eye button to show what you typed, and hides it again when you press Sign in or Change password.
 - Each card has a Kernel memory row: the memory page size, how many huge pages are reserved, and the automatic huge pages setting, with what that means for XMRig.
+- A UPS row on the card of any computer that runs NUT (Network UPS Tools): on wall power or on battery, battery %, minutes left and load, with a warning on the card while it's on battery and a stronger one when the battery is low. It reads the first UPS NUT lists, or the one named in MINDFUL_FLEET_UPS in the reporter's settings. Reading needs no NUT sign-in.
 - The hub answers browsers only at its own addresses: an IP address, a one-word name, localhost, or a name ending in .local, .lan, .home.arpa, .internal or .ts.net. This stops a hostile web page from reaching the dashboard through a name it controls (DNS rebinding). To open the hub by another name, add it to MINDFUL_FLEET_ALLOWED_HOSTS in /etc/mindful-fleet/hub.env and restart the hub; an entry like .trycloudflare.com allows every name under it, for a tunnel. The Pis' reports are checked by the fleet token as before, whatever name they use.
 
 ## 0.2.16 (2026-11-21)

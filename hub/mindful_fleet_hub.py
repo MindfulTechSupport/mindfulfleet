@@ -144,6 +144,21 @@ def _text(value, length):
     return "".join(ch for ch in value[:length] if ch.isprintable()) or None
 
 
+def _ups(value):
+    """UPS through NUT (#58). A malformed one is dropped rather than refusing the whole report."""
+    if not isinstance(value, dict):
+        return None
+    status = value.get("status")
+    if not isinstance(status, str) or not re.fullmatch(r"[A-Z ]{1,40}", status.strip()):
+        return None
+    try:
+        return {"name": _text(value.get("name"), 40) or "UPS", "status": status.strip(),
+                "charge": _number(value.get("charge"), 0, 100), "runtime_s": _number(value.get("runtime_s"), 0, 10**7),
+                "load": _number(value.get("load"), 0, 1000)}
+    except BadReport:
+        return None
+
+
 def _sensors(values):
     """Extra power sensors, such as one on a fan's supply line."""
     if values is None:
@@ -229,6 +244,7 @@ def clean_report(raw):
         "page_kb": _number(raw.get("page_kb"), 0, 1 << 20),
         "huge_pages": _number(raw.get("huge_pages"), 0, 1 << 30),
         "thp": raw.get("thp") if raw.get("thp") in ("always", "madvise", "never") else None,
+        "ups": _ups(raw.get("ups")),
     }
 
 
@@ -931,6 +947,8 @@ def demo_report(name, temp, *, throttled=0, fan=None, mem=38, disk=31, cpu=None,
         "top_process_cpu": round(sum(cpu) - 4, 1) if cpu and sum(cpu) > 250 else round(random.uniform(1, 9), 1),
         "kernel": "6.18.50+rpt-rpi-2712",
         "page_kb": 16, "huge_pages": 0, "thp": "madvise",
+        "ups": {"name": "tripplite", "status": "OL CHRG", "charge": 100, "runtime_s": 2400, "load": 13}
+        if name == "attic-pi" else None,
     }
 
 

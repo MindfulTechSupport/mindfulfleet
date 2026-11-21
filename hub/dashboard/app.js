@@ -15,7 +15,7 @@ const ROWS = [
   ["top", "Busiest program"], ["memory", "Memory"], ["swap", "Swap"], ["storage", "Storage"],
   ["diskio", "Storage speed"], ["network", "Network"], ["wifi", "Wi-Fi"], ["sensor", "Power sensors"],
   ["history", "24-hour chart"], ["averages", "Averages"],
-  ["uptime", "Running for"], ["system", "System"], ["kernel", "Kernel memory"], ["connect", "Connect (SSH)"],
+  ["uptime", "Running for"], ["system", "System"], ["kernel", "Kernel memory"], ["ups", "UPS"], ["connect", "Connect (SSH)"],
 ];
 const WINDOWS = [["5m", "5m", "5 minutes"], ["15m", "15m", "15 minutes"], ["30m", "30m", "30 minutes"], ["1h", "1h", "1 hour"], ["24h", "24h", "24 hours"]];
 const SHARED_KEYS = ["order", "groups", "members", "hidden", "price", "region"];
@@ -498,6 +498,15 @@ function readings(pi) {
     const detail = pi.huge_pages ? "XMRig can use them for a faster hashrate." : "XMRig runs without huge pages, which is normal on a stock Raspberry Pi kernel.";
     row("kernel", "Kernel memory", text({ level: "", text: `${pages}, ${huge}` },
       `${detail}${pi.thp ? ` Automatic huge pages: ${pi.thp}.` : ""}`));
+  }
+  if (pi.ups) {
+    // UPS through NUT (#58): NUT's status words in plain English.
+    const flags = pi.ups.status.split(" ");
+    const state = flags.includes("LB") ? "Battery low" : flags.includes("OB") ? "On battery" : flags.includes("OL") ? "On wall power" : pi.ups.status;
+    const level = flags.includes("LB") ? "bad" : flags.includes("OB") ? "warn" : "";
+    const parts = [pi.ups.charge != null && `battery ${Math.round(pi.ups.charge)}%`, flags.includes("CHRG") && "charging",
+      pi.ups.runtime_s != null && `about ${Math.round(pi.ups.runtime_s / 60)} min on battery`, pi.ups.load != null && `load ${Math.round(pi.ups.load)}%`].filter(Boolean);
+    row("ups", "UPS", text({ level, text: state }, `${pi.ups.name}: ${parts.join(", ")}`));
   }
   if (pi.ip) row("connect", "Connect", sshBox(pi.ip));
   const parts = [facts];

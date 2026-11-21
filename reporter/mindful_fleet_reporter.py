@@ -344,6 +344,35 @@ def read_kernel_memory(root="/"):
     return info
 
 
+def read_ups(run=subprocess.run, name=None):
+    """UPS through NUT (#58): status, battery, minutes left and load, read with upsc (reading needs no NUT sign-in).
+    Uses MINDFUL_FLEET_UPS (such as myups@localhost) when set, otherwise the first UPS this computer's NUT lists."""
+    if not shutil.which("upsc"):
+        return None
+    try:
+        if not name:
+            listed = run(["upsc", "-l"], capture_output=True, text=True, timeout=3, check=False)
+            names = listed.stdout.split() if listed.returncode == 0 else []
+            if not names:
+                return None
+            name = f"{names[0]}@localhost"
+        done = run(["upsc", name], capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    values = dict(line.split(": ", 1) for line in done.stdout.splitlines() if ": " in line)
+
+    def number(key):
+        try:
+            return float(values[key])
+        except (KeyError, ValueError):
+            return None
+
+    return {"name": name.split("@", 1)[0][:40], "status": values.get("ups.status", "").strip()[:40],
+            "charge": number("battery.charge"), "runtime_s": number("battery.runtime"), "load": number("ups.load")}
+
+
 def read_cpu_times(root="/"):
     """Return {core_index: (busy_ticks, total_ticks)} from /proc/stat."""
     text = _read(root, "/proc/stat") or ""
@@ -492,6 +521,7 @@ def collect(hub_url, cpu_before, cpu_after, root="/", disk_path="/", run=subproc
         **read_xmrig(xmrig_url, xmrig_token),
         "wifi_dbm": read_wifi_dbm(root),
         "sensors": read_power_sensors(root, sensor_labels()),
+        "ups": read_ups(run, os.environ.get("MINDFUL_FLEET_UPS") or None) if root == "/" else None,
         "disk_read_bps": disk_in,
         "disk_write_bps": disk_out,
         "top_process": top_name,

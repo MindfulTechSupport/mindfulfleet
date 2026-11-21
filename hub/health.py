@@ -135,7 +135,19 @@ def assess(report, age_seconds, fan_max_rpm=0):
     if disk_level != OK:
         issues.append((disk_level, f"Storage is {_whole(disk_pct)}% full."))
 
-    status = _worst(temp_level, fan_level, speed_level, power_level, mem_level, disk_level)
+    ups_level = OK
+    ups = report.get("ups") or {}
+    flags = str(ups.get("status") or "").split()
+    left = f"{_whole(ups['charge'])}% left" if ups.get("charge") is not None else "battery level unknown"
+    minutes = f", about {_whole(ups['runtime_s'] / 60)} minutes" if ups.get("runtime_s") is not None else ""
+    if "LB" in flags:
+        ups_level = BAD
+        issues.append((BAD, f"Its UPS battery is low ({left}{minutes}). Shut down safely or bring the power back."))
+    elif "OB" in flags:
+        ups_level = WARN
+        issues.append((WARN, f"Its UPS is running on battery: {left}{minutes}."))
+
+    status = _worst(temp_level, fan_level, speed_level, power_level, mem_level, disk_level, ups_level)
 
     online = age_seconds < OFFLINE_AFTER_SECONDS
     if not online:

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -129,3 +130,47 @@ class PasswordEyeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpsTests(unittest.TestCase):
+    """UPS through NUT (#58)."""
+
+    UPSC = "battery.charge: 84\nbattery.runtime: 1500\nups.load: 13\nups.status: OB DISCHRG\ndevice.mfr: Tripp Lite\n"
+
+    def fake_run(self, outputs):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            out, code = outputs[" ".join(cmd)]
+            return type("Done", (), {"stdout": out, "returncode": code})()
+        return run, calls
+
+    def test_reads_the_first_ups_nut_lists(self):
+        run, calls = self.fake_run({"upsc -l": ("tripplite\n", 0), "upsc tripplite@localhost": (self.UPSC, 0)})
+        with unittest.mock.patch("shutil.which", return_value="/usr/bin/upsc"):
+            ups = reporter.read_ups(run)
+        self.assertEqual(ups, {"name": "tripplite", "status": "OB DISCHRG", "charge": 84.0, "runtime_s": 1500.0, "load": 13.0})
+
+    def test_no_nut_means_no_ups(self):
+        with unittest.mock.patch("shutil.which", return_value=None):
+            self.assertIsNone(reporter.read_ups(lambda *a, **k: None))
+        run, _ = self.fake_run({"upsc -l": ("", 1)})
+        with unittest.mock.patch("shutil.which", return_value="/usr/bin/upsc"):
+            self.assertIsNone(reporter.read_ups(run))
+
+    def test_hub_checks_it(self):
+        base = {"id": "abcdef0123456789", "hostname": "test-pi"}
+        kept = hub.clean_report({**base, "ups": {"name": "tripplite", "status": "OL CHRG", "charge": 100, "load": 13}})
+        self.assertEqual(kept["ups"]["status"], "OL CHRG")
+        for bad in ({"status": "<script>"}, {"status": "OL", "charge": 400}, "OL", None):
+            self.assertIsNone(hub.clean_report({**base, "ups": bad})["ups"], bad)
+
+    def test_card_warns_on_battery(self):
+        import health
+        on_battery = health.assess({"ups": {"status": "OB DISCHRG", "charge": 84, "runtime_s": 1500}}, 1)
+        self.assertEqual(on_battery["status"], "warn")
+        self.assertIn("running on battery: 84% left, about 25 minutes", on_battery["issues"][0]["text"])
+        low = health.assess({"ups": {"status": "OB LB", "charge": 9}}, 1)
+        self.assertEqual(low["status"], "bad")
+        self.assertEqual(health.assess({"ups": {"status": "OL CHRG"}}, 1)["status"], "ok")
