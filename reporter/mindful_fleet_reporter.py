@@ -8,6 +8,7 @@ import argparse
 import glob
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -368,7 +369,7 @@ def read_ups(run=subprocess.run, name=None):
             number = float(values[key])
         except (KeyError, ValueError):
             return None
-        return number if number == number and abs(number) != float("inf") else None  # No NaN or infinity
+        return number if math.isfinite(number) else None  # No NaN or infinity
 
     return {"name": name.split("@", 1)[0][:40], "status": values.get("ups.status", "").strip()[:40],
             "charge": number("battery.charge"), "runtime_s": number("battery.runtime"), "load": number("ups.load")}
