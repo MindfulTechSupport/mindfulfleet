@@ -1,0 +1,30 @@
+{
+  "name": "mindfulfleet",
+  "product": "MindfulFleet",
+  "command": "mindful-fleet",
+  "service_prefix": "mindful-fleet",
+  "settings_prefix": "MINDFUL_FLEET_",
+  "app_dir": "/opt/mindful-fleet",
+  "settings_dir": "/etc/mindful-fleet",
+  "state_dir": "/var/lib/mindful-fleet",
+  "port": 8742,
+  "hub": "on",
+  "updates": {"source": "github", "repo": "MindfulTechSupport/mindfulfleet", "branch": "release"},
+  "addons": ["xmrig", "ups-nut"],
+  "addon_settings": {
+    "xmrig": {"url": "MINDFUL_FLEET_XMRIG", "token": "MINDFUL_FLEET_XMRIG_TOKEN"},
+    "ups-nut": {"name": "MINDFUL_FLEET_UPS"}
+  },
+  "plans": {
+    "free": [],
+    "plus": ["plus"],
+    "pro": ["plus", "pro"],
+    "owner": ["plus", "pro"],
+    "demo": ["plus", "pro"]
+  },
+  "console": {"allowed": true, "default": "off"},
+  "legal": {
+    "footer": "Works with Raspberry Pi. Raspberry Pi is a trademark of Raspberry Pi Ltd. MindfulFleet is an independent project, not made or endorsed by Raspberry Pi Ltd."
+  },
+  "support": {"site": "https://mindfulfleet.com"}
+}

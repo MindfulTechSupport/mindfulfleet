@@ -1,0 +1,18 @@
+{
+  "name": "xmrig",
+  "kind": "reader",
+  "about": "Mining numbers from XMRig's own web API on this computer (read-only; the wallet address isn't read).",
+  "settings": {"url": "XMRig's API address, such as http://127.0.0.1:37841, or off", "token": "XMRig's API token, if it has one"},
+  "fields": {
+    "hashrate": {"type": "number"},
+    "hashrate_15m": {"type": "number"},
+    "mining_threads": {"type": "number"},
+    "shares_good": {"type": "number"},
+    "shares_total": {"type": "number"},
+    "pool": {"type": "text"},
+    "pool_tls": {"type": "text"},
+    "rig_id": {"type": "text"},
+    "algo": {"type": "text"},
+    "miner_version": {"type": "text"}
+  }
+}

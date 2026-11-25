@@ -1,0 +1,9 @@
+{
+  "name": "ups-nut",
+  "kind": "reader",
+  "about": "UPS status, battery charge, minutes left and load, read through NUT's upsc (reading needs no NUT sign-in).",
+  "settings": {"name": "The UPS to read, such as myups@localhost; empty means the first UPS NUT lists"},
+  "fields": {
+    "ups": {"type": "object"}
+  }
+}

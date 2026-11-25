@@ -1,0 +1,7 @@
+{
+  "product": "MindfulFleet",
+  "device": ["Pi", "Pis"],
+  "hub": ["hub", "hubs"],
+  "find_devices": "Find my Pis",
+  "fleet": ["fleet", "fleets"]
+}
