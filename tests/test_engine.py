@@ -205,7 +205,7 @@ class AddonTests(unittest.TestCase):
 
 
 class AddonParityTests(unittest.TestCase):
-    """The add-ons give exactly what the reporter's built-in readers give, so moving to them changes nothing."""
+    """The reporter reads XMRig and UPS through the add-ons, with the same results as its old built-in readers."""
 
     @classmethod
     def setUpClass(cls):
@@ -277,6 +277,46 @@ class AddonParityTests(unittest.TestCase):
                 self.assertEqual(self.ups.read({"run": fake(outputs), "name": name}), expected)
         with unittest.mock.patch("shutil.which", return_value=None):
             self.assertEqual(self.ups.read({}), {})
+
+
+class ReporterUsesAddonsTests(unittest.TestCase):
+    """The reporter gets XMRig and UPS from addons/, and an installed copy finds them."""
+
+    def test_reporter_readers_come_from_the_addons(self):
+        self.assertEqual(sorted(reporter._ADDONS), ["ups-nut", "xmrig"])
+        self.assertEqual(Path(reporter._ADDONS["xmrig"].__file__), ROOT / "addons" / "xmrig" / "reader.py")
+
+    def test_missing_engine_or_addon_turns_those_readings_off_not_the_reporter(self):
+        with tempfile.TemporaryDirectory() as folder, unittest.mock.patch("sys.stderr"):
+            self.assertEqual(reporter.load_reader_addons(ROOT, ("xmrig", "no-such-addon")).keys(), {"xmrig"})
+            with unittest.mock.patch.dict(sys.modules, {"engine.addons": None}):
+                self.assertEqual(reporter.load_reader_addons(Path(folder)), {})
+        with unittest.mock.patch.dict(reporter._ADDONS, clear=True):
+            self.assertEqual(reporter.read_xmrig("http://127.0.0.1:9"), {})
+            self.assertIsNone(reporter.read_ups())
+
+    def test_installed_copy_starts_and_reads_through_its_addons(self):
+        import subprocess
+        script = (ROOT / "install" / "install-reporter.sh").read_text(encoding="utf-8")
+        block = script[script.index("# Fleet Engine files: start"):script.index("# Fleet Engine files: end")]
+        with tempfile.TemporaryDirectory() as folder:
+            app = Path(folder) / "app"
+            (app / "reporter").mkdir(parents=True)
+            (app / "reporter" / "mindful_fleet_reporter.py").write_bytes((ROOT / "reporter" / "mindful_fleet_reporter.py").read_bytes())
+            subprocess.run(["bash", "-c", "set -euo pipefail\n" + block.replace("/opt/mindful-fleet", str(app))],
+                           env={"SOURCE": str(ROOT), "PATH": "/usr/bin:/bin"}, check=True, timeout=60)
+            self.assertTrue((app / "engine" / "addons.py").is_file())
+            self.assertTrue((app / "addons" / "ups-nut" / "addon.json").is_file())
+            self.assertTrue((app / "flavors" / "mindfulfleet" / "flavor.json").is_file())
+            installed = app / "reporter" / "mindful_fleet_reporter.py"
+            # Started the way the service starts it, from the installed folder alone.
+            done = subprocess.run([sys.executable, "-I", str(installed), "--version"], cwd="/", capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            check = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+                     "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); print(sorted(m._ADDONS))")
+            done = subprocess.run([sys.executable, "-I", "-c", check, str(installed)], cwd="/", capture_output=True, text=True)
+            self.assertEqual(done.stdout.strip(), "['ups-nut', 'xmrig']", done.stderr)
+            self.assertEqual(done.stderr, "")
 
 
 class CleanEdgeTests(unittest.TestCase):

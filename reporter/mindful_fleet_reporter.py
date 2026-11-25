@@ -8,7 +8,6 @@ import argparse
 import glob
 import hashlib
 import json
-import math
 import os
 import re
 import shutil
@@ -19,10 +18,34 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+
+# The Fleet Engine and its add-ons sit next to this program's folder: /opt/mindful-fleet on a Pi,
+# or the repository when run from source (doc 22). XMRig and UPS readings come from add-ons.
+APP_ROOT = Path(__file__).resolve().parent.parent
+READER_ADDONS = ("xmrig", "ups-nut")
+
+
+def load_reader_addons(root=APP_ROOT, names=READER_ADDONS):
+    """The reader add-ons by name. A missing or broken one is left out with a plain message, never fatal."""
+    try:
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from engine.addons import load_addons
+    except ImportError:
+        print("MindfulFleet: the engine folder is missing, so mining and UPS readings are off. "
+              "Run sudo mindful-fleet update to put it back.", file=sys.stderr)
+        return {}
+    loaded, problems = load_addons(Path(root) / "addons", names)
+    for problem in problems:
+        print(f"MindfulFleet: {problem}", file=sys.stderr)
+    return {addon.name: addon.module for addon in loaded}
+
 
 VERSION = "0.2.17"
 XMRIG_DEFAULT = "http://127.0.0.1:37841"  # The port "mindful-fleet xmrig" sets up.
 DEFAULT_INTERVAL = 15
+_ADDONS = load_reader_addons()
 
 
 def _read(root, path):
@@ -265,53 +288,12 @@ def sensor_labels():
 
 
 def read_xmrig(url, token=None, timeout=2):
-    """Mining numbers from XMRig's built-in web API, which it serves only on this computer.
+    """Mining numbers from XMRig's built-in web API, through the xmrig add-on (addons/xmrig).
 
     Read-only: the API is turned on in "restricted" mode, so it can't change the miner.
     Nothing here is sent anywhere except to the hub, and the wallet address isn't read.
     """
-    if not url or url == "off" or not is_web_address(url):
-        return {}
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-    def get(path):
-        request = urllib.request.Request(url.rstrip("/") + path, headers=headers)  # noqa: S310 - checked by is_web_address
-        with opener.open(request, timeout=timeout) as response:
-            return json.loads(response.read(500_000))
-
-    try:
-        summary = get("/2/summary")
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(summary, dict):
-        return {}
-    rates = (summary.get("hashrate") or {}).get("total") or []
-
-    def rate(i):
-        return rates[i] if len(rates) > i and isinstance(rates[i], (int, float)) else None
-
-    results = summary.get("results") or {}
-    connection = summary.get("connection") or {}
-    found = {
-        "hashrate": rate(1) if rate(1) is not None else rate(0),
-        "hashrate_15m": rate(2),
-        "shares_good": results.get("shares_good"),
-        "shares_total": results.get("shares_total"),
-        "pool": connection.get("pool"),
-        # XMRig reports the TLS version when the pool link is encrypted, and nothing when it isn't.
-        "pool_tls": (connection.get("tls") or "none") if connection.get("pool") else None,
-        "rig_id": summary.get("worker_id"),
-        "algo": summary.get("algo"),
-        "miner_version": summary.get("version"),
-    }
-    try:
-        for backend in get("/2/backends"):
-            if backend.get("type") == "cpu" and backend.get("enabled"):
-                found["mining_threads"] = len(backend.get("threads") or [])
-    except (OSError, ValueError, AttributeError, TypeError):
-        pass
-    return found
+    return _ADDONS["xmrig"].read_xmrig(url, token, timeout) if "xmrig" in _ADDONS else {}
 
 
 def read_core_volts(run=subprocess.run):
@@ -346,33 +328,9 @@ def read_kernel_memory(root="/"):
 
 
 def read_ups(run=subprocess.run, name=None):
-    """UPS through NUT (#58): status, battery, minutes left and load, read with upsc (reading needs no NUT sign-in).
+    """UPS through NUT (#58), through the ups-nut add-on (addons/ups-nut): status, battery, minutes left and load.
     Uses MINDFUL_FLEET_UPS (such as myups@localhost) when set, otherwise the first UPS this computer's NUT lists."""
-    if not shutil.which("upsc"):
-        return None
-    try:
-        if not name:
-            listed = run(["upsc", "-l"], capture_output=True, text=True, timeout=3, check=False)
-            names = listed.stdout.split() if listed.returncode == 0 else []
-            if not names:
-                return None
-            name = f"{names[0]}@localhost"
-        done = run(["upsc", name], capture_output=True, text=True, timeout=3, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if done.returncode != 0:
-        return None
-    values = dict(line.split(": ", 1) for line in done.stdout.splitlines() if ": " in line)
-
-    def number(key):
-        try:
-            number = float(values[key])
-        except (KeyError, ValueError):
-            return None
-        return number if math.isfinite(number) else None  # No NaN or infinity
-
-    return {"name": name.split("@", 1)[0][:40], "status": values.get("ups.status", "").strip()[:40],
-            "charge": number("battery.charge"), "runtime_s": number("battery.runtime"), "load": number("ups.load")}
+    return _ADDONS["ups-nut"].read_ups(run, name) if "ups-nut" in _ADDONS else None
 
 
 def read_cpu_times(root="/"):

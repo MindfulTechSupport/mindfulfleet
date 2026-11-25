@@ -21,8 +21,9 @@ FIELD_TYPES = ("number", "text", "object")
 
 
 class Addon:
-    def __init__(self, name, kind, fields, read, folder):
+    def __init__(self, name, kind, fields, read, folder, module=None):
         self.name, self.kind, self.fields, self.read, self.folder = name, kind, fields, read, folder
+        self.module = module  # The loaded reader.py, for programs that call its own functions
 
 
 def _check_manifest(name, data):
@@ -61,7 +62,7 @@ def load_addons(folder, names):
         except Exception as err:  # noqa: BLE001 - any broken add-on is switched off, never fatal
             problems.append(f"The add-on '{name}' was switched off: {err}. Reinstall it or remove it from the flavor.")
             continue
-        loaded.append(Addon(name, "reader", fields, read, here))
+        loaded.append(Addon(name, "reader", fields, read, here, module))
     return loaded, problems
 
 

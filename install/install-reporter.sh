@@ -27,6 +27,16 @@ getent group video >/dev/null && usermod -aG video mindful-fleet
 
 install -d -m 755 /opt/mindful-fleet/reporter
 install -m 755 "$SOURCE"/reporter/mindful_fleet_reporter.py /opt/mindful-fleet/reporter/
+# Fleet Engine files: start. The engine and the add-ons the reporter reads XMRig and UPS through (doc 22).
+for part in engine addons flavors; do
+  while IFS= read -r -d '' dir; do
+    install -d -m 755 "/opt/mindful-fleet/${dir#"$SOURCE"/}"
+  done < <(find "$SOURCE/$part" -type d -not -name __pycache__ -print0)
+  while IFS= read -r -d '' file; do
+    install -m 644 "$file" "/opt/mindful-fleet/${file#"$SOURCE"/}"
+  done < <(find "$SOURCE/$part" -type f -not -path '*/__pycache__/*' -print0)
+done
+# Fleet Engine files: end
 install -d -m 755 /opt/mindful-fleet/tools
 install -m 755 "$SOURCE"/tools/mindful_fleet_tools.py /opt/mindful-fleet/tools/
 
