@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (0.3.0 Home, first step: the Fleet Engine)
+
+- Nothing changes on screen, and readings stay the same. This is the first part of the engine reshape (doc 22, Step 1).
+- The report contract v1 (engine/report/CONTRACT.md): every field a device may send, its kind and limits. Tests hold the hub to it.
+- The MindfulFleet flavor (flavors/mindfulfleet): its name, words, folders, port, services, update source, plans and console setting, with tests that keep it equal to what Pis use today.
+- Add-ons (addons/): the reporter now reads XMRig and UPS through the first two add-ons, with the same results as before. A missing or broken add-on turns off only its own readings, with a plain message. The reporter installer copies the engine, add-ons and flavor next to the reporter.
+- Checks that keep product names out of the engine and the add-ons, and keep them to the standard library.
+
 ## 0.2.17 (2026-11-21)
 
 - Every password box has an eye button to show what you typed, and hides it again when you press Sign in or Change password.

@@ -17,6 +17,13 @@ The project's coding rules. They come from its standing rules and change only wh
 - The reporter accepts only `http://` or `https://` addresses for the hub and XMRig.
 - Remote actions follow the guard rails: opt-in on the hub and on each Pi, a timed unlock, confirm first, back up first, one-tap undo, automatic undo if a Pi doesn't come back healthy, one Pi before the rest, everything logged.
 
+### Engine (doc 22; D-107 to D-111)
+
+- `engine/` is the Fleet Engine and `addons/` are shared add-ons: no product names, folders or settings names inside (tests/test_engine.py checks). Those come from the flavor in `flavors/<name>/`.
+- Every report field is in the report contract (`engine/report/contract.py`, `engine/report/CONTRACT.md`); the hub keeps only those. Adding a field means adding it to the contract and its tests.
+- Every Python file in `engine/` and `addons/` starts with `# SPDX-License-Identifier: MIT` and imports only the standard library.
+- An add-on declares every field it adds in its `addon.json`; a broken add-on is switched off with a plain message, never fatal.
+
 ### Errors
 
 - Security files fail closed: if a file such as the password file can't be read or is malformed, the feature locks with a plain message instead of opening.
